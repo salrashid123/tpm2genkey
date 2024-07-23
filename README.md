@@ -19,8 +19,8 @@ The PEM output files are compliant with basic
 | **`-alg`** | new key algorithm: rsa,ecdsa,aes (default: `rsa`) |
 | **`-exponent`** | RSA exponent (default: `65537`) |
 | **`-rsakeysize`** | RSA keysize: rsa (default: `2048`) |
-| **`-curve`** | ECDSA curve (secp224r1|prime256v1|secp384r1|secp521r1) (default: `prime256v1`) |
-| **`-mode`** | AES mode ([cfb|crt|ofb|cbc|ecb]) (default: `cfb`) |
+| **`-curve`** | ECDSA curve (`secp224r1 prime256v1 secp384r1 secp521r1`) (default: `prime256v1`) |
+| **`-mode`** | AES mode ([`cfb crt ofb cbc ecb`]) (default: `cfb`) |
 | **`-aeskeysize`** | AES keysize: rsa (default: `128`) |
 | **`-parent`** | key parent (default: `TPMRHOwner 0x40000001 // 1073741825`) |
 | **`-password`** | passphrase for the TPM key (default: "") |
