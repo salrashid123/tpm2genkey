@@ -27,6 +27,7 @@ type NewKeyConfig struct {
 	Curve       string // for ecdsa [secp224r1|prime256v1|secp384r1|secp521r1"
 	Mode        string // for aes  [cfb|crt|ofb|cbc|ecb]
 	AESKeySize  int    // for aes, 128
+	PCRs        []uint // PCR banks to bind to
 	Description string
 }
 
@@ -34,8 +35,46 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 
 	// todo: validate input
 
+	rwr := transport.FromReadWriter(h.TPMDevice)
+
 	// setup the key template
 	var keyTemplate tpm2.TPMTPublic
+
+	sess, cleanup1, err := tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16, []tpm2.AuthOption{tpm2.Trial(), tpm2.AESEncryption(128, tpm2.EncryptIn), tpm2.AESEncryption(128, tpm2.EncryptOut)}...)
+	if err != nil {
+		return nil, fmt.Errorf("setting up trial session: %v", err)
+	}
+	defer func() {
+		if err := cleanup1(); err != nil {
+			fmt.Printf("cleaning up trial session: %v", err)
+		}
+	}()
+
+	sel := tpm2.TPMLPCRSelection{
+		PCRSelections: []tpm2.TPMSPCRSelection{
+			{
+				Hash:      tpm2.TPMAlgSHA256,
+				PCRSelect: tpm2.PCClientCompatible.PCRs(h.PCRs...),
+			},
+		},
+	}
+
+	_, err = tpm2.PolicyPCR{
+		PolicySession: sess.Handle(),
+		Pcrs: tpm2.TPMLPCRSelection{
+			PCRSelections: sel.PCRSelections,
+		},
+	}.Execute(rwr)
+	if err != nil {
+		return nil, fmt.Errorf("error executing PolicyPCR: %v", err)
+	}
+
+	pgd, err := tpm2.PolicyGetDigest{
+		PolicySession: sess.Handle(),
+	}.Execute(rwr)
+	if err != nil {
+		return nil, fmt.Errorf("error executing PolicyGetDigest: %v", err)
+	}
 
 	if h.Alg == "rsa" {
 		keyTemplate = tpm2.TPMTPublic{
@@ -48,7 +87,9 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 				SensitiveDataOrigin: true,
 				UserWithAuth:        true,
 			},
-			AuthPolicy: tpm2.TPM2BDigest{},
+			AuthPolicy: tpm2.TPM2BDigest{
+				Buffer: pgd.PolicyDigest.Buffer,
+			},
 			Parameters: tpm2.NewTPMUPublicParms(
 				tpm2.TPMAlgRSA,
 				&tpm2.TPMSRSAParms{
@@ -94,7 +135,9 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 				SensitiveDataOrigin: true,
 				UserWithAuth:        true,
 			},
-			AuthPolicy: tpm2.TPM2BDigest{},
+			AuthPolicy: tpm2.TPM2BDigest{
+				Buffer: pgd.PolicyDigest.Buffer,
+			},
 			Parameters: tpm2.NewTPMUPublicParms(
 				tpm2.TPMAlgECC,
 				&tpm2.TPMSECCParms{
@@ -142,6 +185,9 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 				Decrypt:             true,
 				SignEncrypt:         true,
 			},
+			AuthPolicy: tpm2.TPM2BDigest{
+				Buffer: pgd.PolicyDigest.Buffer,
+			},
 			Parameters: tpm2.NewTPMUPublicParms(
 				tpm2.TPMAlgSymCipher,
 				&tpm2.TPMSSymCipherParms{
@@ -164,8 +210,6 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 	// now create the key, if the parent is a permanent handle,
 	//     use the default h2 tenplate as the primary key teplate and then a key under that primary key
 	// if the parent is a persistent handle, create a key using that as the parent.
-
-	rwr := transport.FromReadWriter(h.TPMDevice)
 
 	var keyresponse *tpm2.CreateResponse
 	if keyfile.IsMSO(tpm2.TPMHandle(h.Parent), keyfile.TPM_HT_PERMANENT) {
@@ -253,7 +297,7 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 	)
 
 	keyFileBytes := new(bytes.Buffer)
-	err := keyfile.Encode(keyFileBytes, kf)
+	err = keyfile.Encode(keyFileBytes, kf)
 	if err != nil {
 		return nil, fmt.Errorf("tpm2-genkey: can't create key bytes: %v", err)
 	}

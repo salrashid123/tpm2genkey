@@ -27,6 +27,7 @@ The PEM output files are compliant with basic
 | **`-ownerpw`** | passphrase for the TPM owner (default: "") |
 | **`-parentpw`** | passphrase for the TPM key parent (default: "") |
 | **`-description`** | description field for the PEM encoded keyfile (default: "") |
+| **`-pcrs`** | comma separated list of current pcr values to bind the key to (default: "") |
 | **`-in`** | input PEM key file to convert (default: `private.pem`) |
 | **`-public`** | Public key (`TPM2B_PUBLIC`) to import or export (requires --private) (default: "") |
 | **`-private`** | The (encrypted) private key (`TPM2B_PRIVATE`) to import or export. (requires --public) (default: "") |
@@ -61,7 +62,7 @@ To create new TPM-based `RSA|ECC` key which uses the default `OWNER` and primary
   openssl rsa -provider tpm2  -provider default -in private.pem --text
 ```
 
-* `RSA` with userAuth
+* `RSA` with userAuth and PCR
 
 ```bash
   tpm2genkey --out=private.pem --password=foo

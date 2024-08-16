@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	"net"
 	"os"
@@ -26,6 +28,8 @@ var (
 
 	// genkey
 	alg = flag.String("alg", "rsa", "key algorithm: rsa, ecdsa or aes")
+
+	pcrs = flag.String("pcrs", "", "pcr banks to bind the key to")
 
 	// rsa
 	exponent   = flag.Int("exponent", 65537, "RSA exponent")
@@ -151,6 +155,17 @@ func main() {
 		rwc.Close()
 	}()
 
+	var uintpcrs = make([]uint, len(strings.Split(*pcrs, ",")))
+
+	for idx, i := range strings.Split(*pcrs, ",") {
+		j, err := strconv.Atoi(i)
+		if err != nil {
+			fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
+			os.Exit(1)
+		}
+		uintpcrs[idx] = uint(j)
+	}
+
 	k, err := tpm2genkey.NewKey(&tpm2genkey.NewKeyConfig{
 		TPMDevice:   rwc,
 		Alg:         *alg,
@@ -162,6 +177,7 @@ func main() {
 		RSAKeySize:  *rsakeysize,
 		Curve:       *curve,
 		Mode:        *mode,
+		PCRs:        uintpcrs,
 		AESKeySize:  *aeskeysize,
 		Description: *description,
 	})
@@ -175,5 +191,4 @@ func main() {
 		fmt.Printf("tpm2genkey: failed to write private key to file %v\n", err)
 		os.Exit(1)
 	}
-	return
 }

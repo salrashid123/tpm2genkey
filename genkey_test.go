@@ -296,6 +296,259 @@ func TestGenKeyNoAuth(t *testing.T) {
 	require.True(t, regenKey.EmptyAuth)
 }
 
+func TestGenKeyPCR(t *testing.T) {
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	require.NoError(t, err)
+
+	pcrs := []uint{0, 23}
+
+	b, err := NewKey(&NewKeyConfig{
+		TPMDevice:  tpmDevice,
+		Alg:        "rsa",
+		Parent:     tpm2.TPMRHOwner.HandleValue(),
+		Exponent:   65537,
+		RSAKeySize: 1024,
+		PCRs:       pcrs,
+	})
+	require.NoError(t, err)
+
+	regenKey, err := keyfile.Decode(b)
+	require.NoError(t, err)
+
+	require.True(t, regenKey.EmptyAuth)
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	primary, err := tpm2.CreatePrimary{
+		PrimaryHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		InPublic: tpm2.New2B(keyfile.ECCSRK_H2_Template),
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: primary.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
+
+	rsaKeyResponse, err := tpm2.Load{
+		ParentHandle: tpm2.NamedHandle{
+			Handle: primary.ObjectHandle,
+			Name:   primary.Name,
+		},
+		InPublic:  regenKey.Pubkey,
+		InPrivate: regenKey.Privkey,
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	data := []byte("stringtosign")
+
+	digest := sha256.Sum256(data)
+
+	sess, cleanup1, err := tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16, []tpm2.AuthOption{}...)
+	require.NoError(t, err)
+
+	defer cleanup1()
+
+	sel := tpm2.TPMLPCRSelection{
+		PCRSelections: []tpm2.TPMSPCRSelection{
+			{
+				Hash:      tpm2.TPMAlgSHA256,
+				PCRSelect: tpm2.PCClientCompatible.PCRs(pcrs...),
+			},
+		},
+	}
+
+	_, err = tpm2.PolicyPCR{
+		PolicySession: sess.Handle(),
+		Pcrs: tpm2.TPMLPCRSelection{
+			PCRSelections: sel.PCRSelections,
+		},
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	rspSign, err := tpm2.Sign{
+		KeyHandle: tpm2.AuthHandle{
+			Handle: rsaKeyResponse.ObjectHandle,
+			Name:   rsaKeyResponse.Name,
+			Auth:   sess,
+		},
+		Digest: tpm2.TPM2BDigest{
+			Buffer: digest[:],
+		},
+		InScheme: tpm2.TPMTSigScheme{
+			Scheme: tpm2.TPMAlgRSASSA,
+			Details: tpm2.NewTPMUSigScheme(
+				tpm2.TPMAlgRSASSA,
+				&tpm2.TPMSSchemeHash{
+					HashAlg: tpm2.TPMAlgSHA256,
+				},
+			),
+		},
+		Validation: tpm2.TPMTTKHashCheck{
+			Tag: tpm2.TPMSTHashCheck,
+		},
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	pub, err := regenKey.Pubkey.Contents()
+	require.NoError(t, err)
+
+	rsaDetail, err := pub.Parameters.RSADetail()
+	require.NoError(t, err)
+
+	rsaUnique, err := pub.Unique.RSA()
+	require.NoError(t, err)
+
+	rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
+	require.NoError(t, err)
+
+	rsassa, err := rspSign.Signature.Signature.RSASSA()
+	require.NoError(t, err)
+
+	err = rsa.VerifyPKCS1v15(rsaPub, crypto.SHA256, digest[:], rsassa.Sig.Buffer)
+	require.NoError(t, err)
+}
+
+func TestGenKeyPCRFail(t *testing.T) {
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	require.NoError(t, err)
+
+	pcrs := []uint{0, 23}
+
+	b, err := NewKey(&NewKeyConfig{
+		TPMDevice:  tpmDevice,
+		Alg:        "rsa",
+		Parent:     tpm2.TPMRHOwner.HandleValue(),
+		Exponent:   65537,
+		RSAKeySize: 1024,
+		PCRs:       pcrs,
+	})
+	require.NoError(t, err)
+
+	regenKey, err := keyfile.Decode(b)
+	require.NoError(t, err)
+
+	require.True(t, regenKey.EmptyAuth)
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	primary, err := tpm2.CreatePrimary{
+		PrimaryHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		InPublic: tpm2.New2B(keyfile.ECCSRK_H2_Template),
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: primary.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
+
+	rsaKeyResponse, err := tpm2.Load{
+		ParentHandle: tpm2.NamedHandle{
+			Handle: primary.ObjectHandle,
+			Name:   primary.Name,
+		},
+		InPublic:  regenKey.Pubkey,
+		InPrivate: regenKey.Privkey,
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	data := []byte("stringtosign")
+
+	digest := sha256.Sum256(data)
+
+	sess, cleanup1, err := tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16, []tpm2.AuthOption{}...)
+	require.NoError(t, err)
+
+	defer cleanup1()
+
+	sel := tpm2.TPMLPCRSelection{
+		PCRSelections: []tpm2.TPMSPCRSelection{
+			{
+				Hash:      tpm2.TPMAlgSHA256,
+				PCRSelect: tpm2.PCClientCompatible.PCRs(pcrs...),
+			},
+		},
+	}
+
+	_, err = tpm2.PolicyPCR{
+		PolicySession: sess.Handle(),
+		Pcrs: tpm2.TPMLPCRSelection{
+			PCRSelections: sel.PCRSelections,
+		},
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	pcrReadRsp, err := tpm2.PCRRead{
+		PCRSelectionIn: tpm2.TPMLPCRSelection{
+			PCRSelections: []tpm2.TPMSPCRSelection{
+				{
+					Hash:      tpm2.TPMAlgSHA256,
+					PCRSelect: tpm2.PCClientCompatible.PCRs(pcrs...),
+				},
+			},
+		},
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	_, err = tpm2.PCRExtend{
+		PCRHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMHandle(uint32(23)),
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		Digests: tpm2.TPMLDigestValues{
+			Digests: []tpm2.TPMTHA{
+				{
+					HashAlg: tpm2.TPMAlgSHA256,
+					Digest:  pcrReadRsp.PCRValues.Digests[0].Buffer,
+				},
+			},
+		},
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	_, err = tpm2.Sign{
+		KeyHandle: tpm2.AuthHandle{
+			Handle: rsaKeyResponse.ObjectHandle,
+			Name:   rsaKeyResponse.Name,
+			Auth:   sess,
+		},
+		Digest: tpm2.TPM2BDigest{
+			Buffer: digest[:],
+		},
+		InScheme: tpm2.TPMTSigScheme{
+			Scheme: tpm2.TPMAlgRSASSA,
+			Details: tpm2.NewTPMUSigScheme(
+				tpm2.TPMAlgRSASSA,
+				&tpm2.TPMSSchemeHash{
+					HashAlg: tpm2.TPMAlgSHA256,
+				},
+			),
+		},
+		Validation: tpm2.TPMTTKHashCheck{
+			Tag: tpm2.TPMSTHashCheck,
+		},
+	}.Execute(rwr)
+	require.Error(t, err)
+
+}
+
 func TestGenKeyParent(t *testing.T) {
 	tpmDevice, err := simulator.Get()
 	require.NoError(t, err)
