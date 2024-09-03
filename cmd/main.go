@@ -158,12 +158,14 @@ func main() {
 	var uintpcrs = make([]uint, len(strings.Split(*pcrs, ",")))
 
 	for idx, i := range strings.Split(*pcrs, ",") {
-		j, err := strconv.Atoi(i)
-		if err != nil {
-			fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
-			os.Exit(1)
+		if i != "" {
+			j, err := strconv.Atoi(i)
+			if err != nil {
+				fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
+				os.Exit(1)
+			}
+			uintpcrs[idx] = uint(j)
 		}
-		uintpcrs[idx] = uint(j)
 	}
 
 	k, err := tpm2genkey.NewKey(&tpm2genkey.NewKeyConfig{
