@@ -15,9 +15,9 @@ The PEM output files are compliant with basic
 | Option | Description |
 |:------------|-------------|
 | **`-tpm-path`** | Path to the TPM device (default: `/dev/tpmrm0`) |
-| **`-mode`** | Operation mode: "create | tpm2pem | pem2tpm" (default: ``) |
+| **`-mode`** | Operation mode: [`create tpm2pem pem2tpm`] (default: ``) |
 | **`-out`** | new key output PEM file (default: `private.pem`) |
-| **`-alg`** | new key algorithm: rsa,ecdsa,aes,hmac (default: `rsa`) |
+| **`-alg`** | new key algorithm: [`rsa ecdsa aes hmac`] (default: `rsa`) |
 | **`-exponent`** | RSA exponent (default: `65537`) |
 | **`-rsakeysize`** | RSA keysize: rsa (default: `2048`) |
 | **`-curve`** | ECDSA curve (`secp224r1 prime256v1 secp384r1 secp521r1`) (default: `prime256v1`) |
