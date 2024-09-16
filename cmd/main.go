@@ -22,12 +22,14 @@ const ()
 var (
 	help = flag.Bool("help", false, "print usage")
 
+	mode = flag.String("mode", "", "create | tpm2pem | pem2tpm")
+
 	// convert
 	public  = flag.String("public", "", "[TPM2B_PUBLIC] public key. Requires --private")
 	private = flag.String("private", "", "[TPM2B_PRIVATE] private key. Requires --public")
 
 	// genkey
-	alg = flag.String("alg", "rsa", "key algorithm: rsa, ecdsa or aes")
+	alg = flag.String("alg", "rsa", "key algorithm: rsa, ecdsa, aes or hmac")
 
 	pcrs = flag.String("pcrs", "", "pcr banks to bind the key to")
 
@@ -39,7 +41,7 @@ var (
 	curve = flag.String("curve", "prime256v1", "ECDSA curve one of [secp224r1|prime256v1|secp384r1|secp521r1]")
 
 	// aes
-	mode       = flag.String("mode", "cfb", "AES mode [cfb|crt|ofb|cbc|ecb]")
+	aesmode    = flag.String("aesmode", "cfb", "AES mode [cfb|crt|ofb|cbc|ecb]")
 	aeskeysize = flag.Int("aeskeysize", 128, "AES keysize")
 
 	// common
@@ -73,10 +75,7 @@ func main() {
 		return
 	}
 
-	// if both --public and --private are set, then convert the keytypes to/from PEM
-	// if --in  is set, then convert PEM --> tpm2 (FromPEM)
-	// if --out is set, then convert tpm2 --> PEM  (ToPEM)
-	if *out != "" && (*public != "" && *private != "") {
+	if *mode == "tpm2pem" {
 		fmt.Println("converting tpm2-->PEM")
 		pu, err := os.ReadFile(*public)
 		if err != nil {
@@ -106,9 +105,7 @@ func main() {
 			os.Exit(1)
 		}
 		return
-	}
-
-	if *in != "" && (*public != "" && *private != "") {
+	} else if *mode == "pem2tpm" {
 		fmt.Println("converting PEM-->tpm2")
 		ppem, err := os.ReadFile(*in)
 		if err != nil {
@@ -133,64 +130,65 @@ func main() {
 			os.Exit(1)
 		}
 		return
-	}
+	} else if *mode == "create" {
 
-	/// Otherwise create a new key
-	fmt.Println("creating new key")
-	if *out == "" {
-		fmt.Printf("tpm2genkey: error must specify --out= parameter when generating new key\n")
-		os.Exit(1)
-	}
-	if *alg != "rsa" && *alg != "ecdsa" && *alg != "aes" {
-		fmt.Printf("tpm2genkey: error key algorithm must be either rsa, ecdsa or aes\n")
-		os.Exit(1)
-	}
-
-	rwc, err := openTPM(*tpmPath)
-	if err != nil {
-		fmt.Printf("can't open TPM %v\n", err)
-		os.Exit(1)
-	}
-	defer func() {
-		rwc.Close()
-	}()
-
-	var uintpcrs = make([]uint, len(strings.Split(*pcrs, ",")))
-
-	for idx, i := range strings.Split(*pcrs, ",") {
-		if i != "" {
-			j, err := strconv.Atoi(i)
-			if err != nil {
-				fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
-				os.Exit(1)
-			}
-			uintpcrs[idx] = uint(j)
+		if *out == "" {
+			fmt.Printf("tpm2genkey: error must specify --out= parameter when generating new key\n")
+			os.Exit(1)
 		}
-	}
+		if *alg != "rsa" && *alg != "ecdsa" && *alg != "aes" && *alg != "hmac" {
+			fmt.Printf("tpm2genkey: error key algorithm must be either rsa, ecdsa, hmac or aes\n")
+			os.Exit(1)
+		}
 
-	k, err := tpm2genkey.NewKey(&tpm2genkey.NewKeyConfig{
-		TPMDevice:   rwc,
-		Alg:         *alg,
-		Exponent:    *exponent,
-		Ownerpw:     []byte(*ownerpw),
-		Parentpw:    []byte(*parentpw),
-		Parent:      uint32(*parent),
-		Password:    []byte(*password),
-		RSAKeySize:  *rsakeysize,
-		Curve:       *curve,
-		Mode:        *mode,
-		PCRs:        uintpcrs,
-		AESKeySize:  *aeskeysize,
-		Description: *description,
-	})
-	if err != nil {
-		fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
-		os.Exit(1)
-	}
+		rwc, err := openTPM(*tpmPath)
+		if err != nil {
+			fmt.Printf("can't open TPM %v\n", err)
+			os.Exit(1)
+		}
+		defer func() {
+			rwc.Close()
+		}()
 
-	err = os.WriteFile(*out, k, 0644)
-	if err != nil {
-		fmt.Printf("tpm2genkey: failed to write private key to file %v\n", err)
-		os.Exit(1)
+		var uintpcrs = make([]uint, len(strings.Split(*pcrs, ",")))
+
+		for idx, i := range strings.Split(*pcrs, ",") {
+			if i != "" {
+				j, err := strconv.Atoi(i)
+				if err != nil {
+					fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
+					os.Exit(1)
+				}
+				uintpcrs[idx] = uint(j)
+			}
+		}
+
+		k, err := tpm2genkey.NewKey(&tpm2genkey.NewKeyConfig{
+			TPMDevice:   rwc,
+			Alg:         *alg,
+			Exponent:    *exponent,
+			Ownerpw:     []byte(*ownerpw),
+			Parentpw:    []byte(*parentpw),
+			Parent:      uint32(*parent),
+			Password:    []byte(*password),
+			RSAKeySize:  *rsakeysize,
+			Curve:       *curve,
+			Mode:        *aesmode,
+			PCRs:        uintpcrs,
+			AESKeySize:  *aeskeysize,
+			Description: *description,
+		})
+		if err != nil {
+			fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
+			os.Exit(1)
+		}
+
+		err = os.WriteFile(*out, k, 0644)
+		if err != nil {
+			fmt.Printf("tpm2genkey: failed to write private key to file %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Println("Unknown mode: must be create|pem2tpm|tpm2pem")
 	}
 }

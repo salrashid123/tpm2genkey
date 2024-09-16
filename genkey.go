@@ -17,7 +17,7 @@ var ()
 type NewKeyConfig struct {
 	Debug       bool               // debug logging
 	TPMDevice   io.ReadWriteCloser // initialized transport for the TPM
-	Alg         string             // rsa or ecdsa
+	Alg         string             // aes, rsa, ecdsa or hmac
 	Exponent    int                // for rsa 65537
 	Ownerpw     []byte
 	Parentpw    []byte
@@ -201,6 +201,31 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 					},
 				},
 			),
+		}
+
+	} else if h.Alg == "hmac" {
+
+		keyTemplate = tpm2.TPMTPublic{
+			Type:    tpm2.TPMAlgKeyedHash,
+			NameAlg: tpm2.TPMAlgSHA256,
+			ObjectAttributes: tpm2.TPMAObject{
+				FixedTPM:            true,
+				FixedParent:         true,
+				SensitiveDataOrigin: true,
+				UserWithAuth:        true,
+				SignEncrypt:         true,
+			},
+			AuthPolicy: tpm2.TPM2BDigest{},
+			Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgKeyedHash,
+				&tpm2.TPMSKeyedHashParms{
+					Scheme: tpm2.TPMTKeyedHashScheme{
+						Scheme: tpm2.TPMAlgHMAC,
+						Details: tpm2.NewTPMUSchemeKeyedHash(tpm2.TPMAlgHMAC,
+							&tpm2.TPMSSchemeHMAC{
+								HashAlg: tpm2.TPMAlgSHA256,
+							}),
+					},
+				}),
 		}
 
 	} else {

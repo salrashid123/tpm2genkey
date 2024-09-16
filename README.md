@@ -15,12 +15,13 @@ The PEM output files are compliant with basic
 | Option | Description |
 |:------------|-------------|
 | **`-tpm-path`** | Path to the TPM device (default: `/dev/tpmrm0`) |
+| **`-mode`** | Operation mode: "create | tpm2pem | pem2tpm" (default: ``) |
 | **`-out`** | new key output PEM file (default: `private.pem`) |
-| **`-alg`** | new key algorithm: rsa,ecdsa,aes (default: `rsa`) |
+| **`-alg`** | new key algorithm: rsa,ecdsa,aes,hmac (default: `rsa`) |
 | **`-exponent`** | RSA exponent (default: `65537`) |
 | **`-rsakeysize`** | RSA keysize: rsa (default: `2048`) |
 | **`-curve`** | ECDSA curve (`secp224r1 prime256v1 secp384r1 secp521r1`) (default: `prime256v1`) |
-| **`-mode`** | AES mode ([`cfb crt ofb cbc ecb`]) (default: `cfb`) |
+| **`-aesmode`** | AES mode ([`cfb crt ofb cbc ecb`]) (default: `cfb`) |
 | **`-aeskeysize`** | AES keysize: rsa (default: `128`) |
 | **`-parent`** | key parent (default: `TPMRHOwner 0x40000001 // 1073741825`) |
 | **`-password`** | passphrase for the TPM key (default: "") |
@@ -48,24 +49,28 @@ go build -o tpm2genkey cmd/main.go
 
 ### New Key with PermanentHandle (TPMHTPermanent)
 
-To create new TPM-based `RSA|ECC` key which uses the default `OWNER` and primary ["H2" template](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#name-parent)
+To create new TPM-based `RSA|ECC|AES|HMAC` key which uses the default `OWNER` and primary ["H2" template](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#name-parent)
 
 
 * `RSA` without userAuth:
 
 ```bash
   ### create an rsa key
-  tpm2genkey --out=private.pem
+  tpm2genkey  --mode=create --alg=rsa --out=private.pem
 
-  ### print the key details using openssl3 and tpm2-openssl
-  openssl asn1parse -inform PEM -in private.pem
-  openssl rsa -provider tpm2  -provider default -in private.pem --text
+  ### if you have openssl3 tpm2 installed https://github.com/tpm2-software/tpm2-openssl
+  # you can print the key details for the swtpm
+  # export OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules/
+  # export TPM2OPENSSL_TCTI="swtpm:port=2321"
+
+  # openssl asn1parse -inform PEM -in private.pem
+  # openssl rsa -provider tpm2  -provider default -in private.pem --text
 ```
 
 * `RSA` with userAuth and PCR
 
 ```bash
-  tpm2genkey --out=private.pem --password=foo
+  tpm2genkey --mode=create --alg=rsa --out=private.pem --password=foo
 
   openssl rsa -provider tpm2  -provider default -in private.pem --text --passin pass:foo
 ```
@@ -73,7 +78,7 @@ To create new TPM-based `RSA|ECC` key which uses the default `OWNER` and primary
 * `ECDSA` wihout userAuth
 
 ```bash
-  tpm2genkey --alg=ecdsa --out=private.pem
+  tpm2genkey  --mode=create --alg=ecdsa --out=private.pem
 
   openssl ec -provider tpm2  -provider default -in private.pem --text
 ```
@@ -82,42 +87,28 @@ To create new TPM-based `RSA|ECC` key which uses the default `OWNER` and primary
 
 ```bash
   # generate the key
-  tpm2genkey --alg=aes --mode=cfb --out=private.pem
-
-  # use this same tool to convert the key to a format tpm2_tools understands
-  tpm2genkey  --in=private.pem --public=key.pub --private=key.prv
-
-  ### create the h2 template
-  printf '\x00\x00' > /tmp/unique.dat
-  tpm2_createprimary -C o -G ecc  -g sha256 \
-      -c primary.ctx \
-      -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u /tmp/unique.dat
-
-  ### encrypt and decrypt
-  echo "foo" > secret.dat
-  openssl rand  -out iv.bin 16
-  tpm2_load -C primary.ctx -u key.pub -r key.prv -c decrypt.ctx
-  tpm2_encryptdecrypt --iv iv.bin -c decrypt.ctx -o encrypt.out secret.dat
-  tpm2_encryptdecrypt --iv iv.bin -c decrypt.ctx  -d -o decrypt.out encrypt.out
-
-  ## for set the keytype and then when encrypting/decrypting use --mode=cbc.  Since in this example the plaintext is small, 
-  ## use --pad]
-  # tpm2genkey --alg=aes --mode=cbc --out=/tmp/private.pem 
-  # tpm2_encryptdecrypt --iv iv.bin -c decrypt.ctx --mode=cbc --pad -o encrypt.out secret.dat
+  tpm2genkey  --mode=create --alg=aes --aesmode=cfb --out=private.pem
 ```
 
-note: Openssl does not implement encryption using a full TPM-resident key.  Instead, it just runs the encryption using a provided key (see [tpm2-openssl symmetric ciphers](https://github.com/tpm2-software/tpm2-openssl/blob/master/docs/symmetric.md#symmetric-ciphers))
+* `HMAC`
 
+HMAC key generation on TPM:
+
+
+```bash
+  # generate the key
+  tpm2genkey --mode=create --alg=hmac  --out=private.pem 
+```
 
 ### New Key with PersistentHandle (TPMHTPersistent)
 
-If you want to genrate a key with a parent thats been saved to a persistent handle,
+If you want to generate a key with a parent thats been saved to a persistent handle,
 
 ```bash
 tpm2_createprimary -C o -c primary.ctx
 tpm2_evictcontrol -C o -c primary.ctx 0x81010003
 
-tpm2genkey --parent=0x81010003 --out=private.pem
+tpm2genkey --mode=create --alg=rsa  --parent=0x81010003 --out=private.pem
 ```
 
 ---
@@ -139,7 +130,7 @@ tpm2_createprimary -C o -G ecc  -g sha256 \
 tpm2_create -G rsa2048:rsassa:null -g sha256  -u key.pub -r key.prv -C primary.ctx
 
 ## convert to pem
-tpm2genkey --public=key.pub --private=key.prv --out=private.pem
+tpm2genkey --mode=tpm2pem --public=key.pub --private=key.prv --out=private.pem
 ```
 
 Note, if you have `tpm2tss-genkey` (openssl1.1) installed, you don't even need this library (you do if you have openssl3):
@@ -158,7 +149,7 @@ tpm2_evictcontrol -C o -c primary.ctx 0x81010003
 tpm2_create -G rsa2048:rsassa:null -g sha256  -u key.pub -r key.prv -C 0x81010003
 
 # convert to pem
-tpm2genkey --public=key.pub --private=key.prv --parent=0x81010003 --out=private.pem 
+tpm2genkey --mode=tpm2pem --public=key.pub --private=key.prv --parent=0x81010003 --out=private.pem 
 ```
 
 ### Convert PEM --> [TPM2B_PUBLIC, TPM2B_PRIVATE]
@@ -179,12 +170,12 @@ tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx
 
 ## create private.pem from key.pub, key.prv
 ### using this cli
-tpm2genkey  --public=key.pub --private=key.prv --out=private.pem
+tpm2genkey --mode=tpm2pem  --public=key.pub --private=key.prv --out=private.pem
 # or with openssl1.1 (since openssl3 does not support this conversion):  
 # tpm2tss-genkey -u key.pub -r key.prv private.pem
 
 # now convert private.pem to key2.pub, key2.prv
-tpm2genkey --in=private.pem --public=key2.pub --private=key2.prv
+tpm2genkey --mode=pem2tpm  --in=private.pem --public=key2.pub --private=key2.prv
 
 ### you may want to also print the key details using openssl which can give a hint about the
 ### primary (eg, if its a permanent handle, then probably regenerate  the 
@@ -276,6 +267,62 @@ tpm2_pcrread sha256:23
 export TPM2OPENSSL_TCTI="swtpm:port=2321"
 
 ## then use this cli, set --tpm-path="127.0.0.1:2321"
-tpm2genkey --alg=rsa --out=private.pem --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=create --alg=rsa --out=private.pem --tpm-path="127.0.0.1:2321"
 ```
 
+#### PEM Keyfile format
+
+The TPM based keys are in PEM format compatible with openssl details of which you can find at [ASN.1 Specification for TPM 2.0 Key Files](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html).
+
+You can generate or convert TPM based keys on your own using openssl, [tpm2tss-genkey](https://github.com/tpm2-software/tpm2-tss-engine/blob/master/man/tpm2tss-genkey.1.md) or [tpm2genkey](https://github.com/salrashid123/tpm2genkey)
+
+decoded keys on TPM are readable as:
+
+```bash
+export OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules/
+export TPM2OPENSSL_TCTI="swtpm:port=2321"
+
+$ openssl rsa -provider tpm2  -provider default -in rsatpm.pem -text
+
+Private-Key: (RSA 2048 bit, TPM 2.0)
+Modulus:
+    00:ec:26:5b:93:c6:09:b9:11:60:aa:d6:8f:21:6c:
+    b5:6e:8a:52:30:b6:83:a1:0c:58:e7:61:ae:75:22:
+    0d:8a:c9:da:dc:98:d0:32:20:a3:05:17:f4:c1:5d:
+    06:f7:d7:05:09:81:e0:13:26:d7:be:74:53:4f:e0:
+    e1:35:79:6e:bc:72:07:23:61:41:69:63:18:16:f4:
+    27:8d:1c:33:31:59:61:6c:c1:76:f0:2c:e5:7c:e9:
+    d4:d0:93:2b:07:27:77:10:2f:ab:c1:01:78:1c:27:
+    68:e7:28:ba:ef:64:84:fe:62:2f:d4:f1:a8:ca:83:
+    df:27:51:50:a3:b8:51:78:0b:04:be:d5:b5:43:a1:
+    4c:89:fa:78:22:d6:45:50:f2:4a:1a:28:00:a5:6a:
+    15:84:1b:46:51:de:2d:3c:65:c2:8b:9c:93:1d:53:
+    da:4f:34:34:1f:b5:d3:d4:a7:81:aa:2b:44:80:b4:
+    ff:58:51:2c:e7:cb:d4:53:18:ad:a3:49:81:9b:51:
+    c5:4a:5d:f0:a7:7d:f7:eb:cc:00:89:13:9f:36:9e:
+    8f:4d:23:7e:f2:36:dd:cb:cc:e3:b6:7b:b1:b9:4d:
+    87:12:8a:33:2d:96:8c:c1:0a:6e:98:a3:54:29:98:
+    86:79:97:33:42:6d:ca:e1:61:7b:bc:20:0d:30:54:
+    92:3f
+Exponent: 65537 (0x10001)
+Object Attributes:
+  userWithAuth
+  sign / encrypt
+Signature Scheme: PKCS1
+  Hash: SHA256
+writing RSA key
+-----BEGIN TSS2 PRIVATE KEY-----
+MIICNQYGZ4EFCgEDoAMBAQECBEAAAAEEggEaARgAAQALAAQAQAAAABAAFAALCAAA
+AQABAQDsJluTxgm5EWCq1o8hbLVuilIwtoOhDFjnYa51Ig2KydrcmNAyIKMFF/TB
+XQb31wUJgeATJte+dFNP4OE1eW68cgcjYUFpYxgW9CeNHDMxWWFswXbwLOV86dTQ
+kysHJ3cQL6vBAXgcJ2jnKLrvZIT+Yi/U8ajKg98nUVCjuFF4CwS+1bVDoUyJ+ngi
+1kVQ8koaKAClahWEG0ZR3i08ZcKLnJMdU9pPNDQftdPUp4GqK0SAtP9YUSzny9RT
+GK2jSYGbUcVKXfCnfffrzACJE582no9NI37yNt3LzOO2e7G5TYcSijMtlozBCm6Y
+o1QpmIZ5lzNCbcrhYXu8IA0wVJI/BIIBAAD+ACDBg/cpGTl++OOHhFwz+nBvPvNm
+qdSNg+gqEzF1Eu2gNgAQ1qv0VDvcnIwo0DlItYWKfL7i1QHVMjp85eVgOGC8Qc65
+VollWVse/DhTZOXz8N6qJhvXbj9HuRK2wdxka4mVjbAbgqNQdJfWbpyJk0d52hJ7
+d71zvOwild71OLe/lvBqQlV3Hrk6Zvaed4C/38K3yPmICFR6YOfsFeDIAirzT+wp
+9WGF9fq9CNzlKZgXAMoYLA6ZthtHKWdUUUYyyK0+yCqeNb32E5jN3Mn3GVxX9tc5
+m5OgWpXX8bLqlRLY38P5J3HZOStjYxNBj5I3PdkvD7DFdlb7ZrJZoUg=
+-----END TSS2 PRIVATE KEY-----
+```

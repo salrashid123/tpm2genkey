@@ -16,6 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	maxInputBuffer = 1024
+)
+
 var ()
 
 func TestGenKeyRSA(t *testing.T) {
@@ -933,4 +937,129 @@ func encryptDecryptSymmetric(rwr transport.TPM, keyAuth tpm2.AuthHandle, iv, dat
 
 	}
 	return out, nil
+}
+
+func TestGenKeyHMAC(t *testing.T) {
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	b, err := NewKey(&NewKeyConfig{
+		TPMDevice: tpmDevice,
+		Alg:       "hmac",
+		Parent:    tpm2.TPMRHOwner.HandleValue(),
+	})
+	require.NoError(t, err)
+
+	regenKey, err := keyfile.Decode(b)
+	require.NoError(t, err)
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	primary, err := tpm2.CreatePrimary{
+		PrimaryHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		InPublic: tpm2.New2B(keyfile.ECCSRK_H2_Template),
+	}.Execute(rwr)
+	require.NoError(t, err)
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: primary.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
+
+	hmacKey, err := tpm2.Load{
+		ParentHandle: tpm2.NamedHandle{
+			Handle: primary.ObjectHandle,
+			Name:   primary.Name,
+		},
+		InPublic:  regenKey.Pubkey,
+		InPrivate: regenKey.Privkey,
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	data := []byte("string to mac")
+
+	objAuth := &tpm2.TPM2BAuth{}
+	_, err = hmac(rwr, data, hmacKey.ObjectHandle, hmacKey.Name, *objAuth)
+	require.NoError(t, err)
+
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: hmacKey.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
+}
+
+func hmac(rwr transport.TPM, data []byte, objHandle tpm2.TPMHandle, objName tpm2.TPM2BName, objAuth tpm2.TPM2BAuth) ([]byte, error) {
+
+	sas, sasCloser, err := tpm2.HMACSession(rwr, tpm2.TPMAlgSHA256, 16, tpm2.Auth(objAuth.Buffer))
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = sasCloser()
+	}()
+
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: sas.Handle(),
+		}
+		_, err = flushContextCmd.Execute(rwr)
+	}()
+
+	hmacStart := tpm2.HmacStart{
+		Handle: tpm2.AuthHandle{
+			Handle: objHandle,
+			Name:   objName,
+			Auth:   sas,
+		},
+		Auth:    objAuth,
+		HashAlg: tpm2.TPMAlgNull,
+	}
+
+	rspHS, err := hmacStart.Execute(rwr)
+	if err != nil {
+		return nil, err
+	}
+
+	authHandle := tpm2.AuthHandle{
+		Name:   objName,
+		Handle: rspHS.SequenceHandle,
+		Auth:   tpm2.PasswordAuth(objAuth.Buffer),
+	}
+	for len(data) > maxInputBuffer {
+		sequenceUpdate := tpm2.SequenceUpdate{
+			SequenceHandle: authHandle,
+			Buffer: tpm2.TPM2BMaxBuffer{
+				Buffer: data[:maxInputBuffer],
+			},
+		}
+		_, err = sequenceUpdate.Execute(rwr)
+		if err != nil {
+			return nil, err
+		}
+
+		data = data[maxInputBuffer:]
+	}
+
+	sequenceComplete := tpm2.SequenceComplete{
+		SequenceHandle: authHandle,
+		Buffer: tpm2.TPM2BMaxBuffer{
+			Buffer: data,
+		},
+		Hierarchy: tpm2.TPMRHOwner,
+	}
+
+	rspSC, err := sequenceComplete.Execute(rwr)
+	if err != nil {
+		return nil, err
+	}
+
+	return rspSC.Result.Buffer, nil
+
 }
