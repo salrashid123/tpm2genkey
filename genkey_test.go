@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"encoding/binary"
 	"io"
 	"testing"
 
@@ -305,17 +306,16 @@ func TestGenKeyPCR(t *testing.T) {
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
-	require.NoError(t, err)
-
 	pcrs := []uint{0, 23}
 
 	b, err := NewKey(&NewKeyConfig{
-		TPMDevice:  tpmDevice,
-		Alg:        "rsa",
-		Parent:     tpm2.TPMRHOwner.HandleValue(),
-		Exponent:   65537,
-		RSAKeySize: 1024,
-		PCRs:       pcrs,
+		TPMDevice:          tpmDevice,
+		Alg:                "rsa",
+		Parent:             tpm2.TPMRHOwner.HandleValue(),
+		Exponent:           65537,
+		RSAKeySize:         1024,
+		PCRs:               pcrs,
+		EnablePolicySyntax: true,
 	})
 	require.NoError(t, err)
 
@@ -323,6 +323,8 @@ func TestGenKeyPCR(t *testing.T) {
 	require.NoError(t, err)
 
 	require.True(t, regenKey.EmptyAuth)
+
+	require.Equal(t, 1, len(regenKey.Policy))
 
 	rwr := transport.FromReadWriter(tpmDevice)
 
@@ -361,6 +363,8 @@ func TestGenKeyPCR(t *testing.T) {
 
 	defer cleanup1()
 
+	ppol := regenKey.Policy[0]
+
 	sel := tpm2.TPMLPCRSelection{
 		PCRSelections: []tpm2.TPMSPCRSelection{
 			{
@@ -370,13 +374,207 @@ func TestGenKeyPCR(t *testing.T) {
 		},
 	}
 
+	expectedDigest, err := getExpectedPCRDigest(rwr, sel, tpm2.TPMAlgSHA256)
+	require.NoError(t, err)
+
+	// 23.7 TPM2_PolicyPCR https://trustedcomputinggroup.org/wp-content/uploads/TPM-Rev-2.0-Part-3-Commands-01.38.pdf
+	pcrSelectionSegment := tpm2.Marshal(sel)
+	pcrDigestSegment := tpm2.Marshal(tpm2.TPM2BDigest{
+		Buffer: expectedDigest,
+	})
+
+	commandParameter := append(pcrDigestSegment, pcrSelectionSegment...)
+	require.Equal(t, int(tpm2.TPMCCPolicyPCR), ppol.CommandCode)
+	require.Equal(t, commandParameter, ppol.CommandPolicy)
+
+	d, err := tpm2.Unmarshal[tpm2.TPM2BDigest](ppol.CommandPolicy)
+	require.NoError(t, err)
+
+	tc, err := tpm2.Unmarshal[tpm2.TPMLPCRSelection](ppol.CommandPolicy[len(d.Buffer)+2:]) // digest includes 2 byte size prefix
+	require.NoError(t, err)
+
 	_, err = tpm2.PolicyPCR{
 		PolicySession: sess.Handle(),
-		Pcrs: tpm2.TPMLPCRSelection{
-			PCRSelections: sel.PCRSelections,
+		PcrDigest:     *d,
+		Pcrs:          *tc,
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	// _, err = tpm2.PolicyPCR{
+	// 	PolicySession: sess.Handle(),
+	// 	Pcrs: tpm2.TPMLPCRSelection{
+	// 		PCRSelections: sel.PCRSelections,
+	// 	},
+	// }.Execute(rwr)
+	// require.NoError(t, err)
+
+	rspSign, err := tpm2.Sign{
+		KeyHandle: tpm2.AuthHandle{
+			Handle: rsaKeyResponse.ObjectHandle,
+			Name:   rsaKeyResponse.Name,
+			Auth:   sess,
+		},
+		Digest: tpm2.TPM2BDigest{
+			Buffer: digest[:],
+		},
+		InScheme: tpm2.TPMTSigScheme{
+			Scheme: tpm2.TPMAlgRSASSA,
+			Details: tpm2.NewTPMUSigScheme(
+				tpm2.TPMAlgRSASSA,
+				&tpm2.TPMSSchemeHash{
+					HashAlg: tpm2.TPMAlgSHA256,
+				},
+			),
+		},
+		Validation: tpm2.TPMTTKHashCheck{
+			Tag: tpm2.TPMSTHashCheck,
 		},
 	}.Execute(rwr)
 	require.NoError(t, err)
+
+	pub, err := regenKey.Pubkey.Contents()
+	require.NoError(t, err)
+
+	rsaDetail, err := pub.Parameters.RSADetail()
+	require.NoError(t, err)
+
+	rsaUnique, err := pub.Unique.RSA()
+	require.NoError(t, err)
+
+	rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
+	require.NoError(t, err)
+
+	rsassa, err := rspSign.Signature.Signature.RSASSA()
+	require.NoError(t, err)
+
+	err = rsa.VerifyPKCS1v15(rsaPub, crypto.SHA256, digest[:], rsassa.Sig.Buffer)
+	require.NoError(t, err)
+}
+
+func TestGenKeyPCRPassword(t *testing.T) {
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	password := "foo"
+
+	pcrs := []uint{0, 23}
+
+	b, err := NewKey(&NewKeyConfig{
+		TPMDevice:          tpmDevice,
+		Alg:                "rsa",
+		Parent:             tpm2.TPMRHOwner.HandleValue(),
+		Exponent:           65537,
+		RSAKeySize:         1024,
+		PCRs:               pcrs,
+		Password:           []byte(password),
+		EnablePolicySyntax: true,
+	})
+	require.NoError(t, err)
+
+	regenKey, err := keyfile.Decode(b)
+	require.NoError(t, err)
+
+	require.False(t, regenKey.EmptyAuth)
+
+	require.Equal(t, 2, len(regenKey.Policy))
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	primary, err := tpm2.CreatePrimary{
+		PrimaryHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		InPublic: tpm2.New2B(keyfile.ECCSRK_H2_Template),
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: primary.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
+
+	rsaKeyResponse, err := tpm2.Load{
+		ParentHandle: tpm2.NamedHandle{
+			Handle: primary.ObjectHandle,
+			Name:   primary.Name,
+		},
+		InPublic:  regenKey.Pubkey,
+		InPrivate: regenKey.Privkey,
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	data := []byte("stringtosign")
+
+	digest := sha256.Sum256(data)
+
+	sess, cleanup1, err := tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16, []tpm2.AuthOption{tpm2.Auth([]byte(password))}...)
+	require.NoError(t, err)
+
+	defer cleanup1()
+
+	for _, ppol := range regenKey.Policy {
+		switch cc := ppol.CommandCode; cc {
+		case int(tpm2.TPMCCPolicyPCR):
+			sel := tpm2.TPMLPCRSelection{
+				PCRSelections: []tpm2.TPMSPCRSelection{
+					{
+						Hash:      tpm2.TPMAlgSHA256,
+						PCRSelect: tpm2.PCClientCompatible.PCRs(pcrs...),
+					},
+				},
+			}
+
+			expectedDigest, err := getExpectedPCRDigest(rwr, sel, tpm2.TPMAlgSHA256)
+			require.NoError(t, err)
+
+			// 23.7 TPM2_PolicyPCR https://trustedcomputinggroup.org/wp-content/uploads/TPM-Rev-2.0-Part-3-Commands-01.38.pdf
+			pcrSelectionSegment := tpm2.Marshal(sel)
+			pcrDigestSegment := tpm2.Marshal(tpm2.TPM2BDigest{
+				Buffer: expectedDigest,
+			})
+
+			commandParameter := append(pcrDigestSegment, pcrSelectionSegment...)
+			require.Equal(t, int(tpm2.TPMCCPolicyPCR), ppol.CommandCode)
+			require.Equal(t, commandParameter, ppol.CommandPolicy)
+
+			// TPM2BDigest struct section 10.4.2 https://trustedcomputinggroup.org/wp-content/uploads/TPM-Rev-2.0-Part-2-Structures-01.38.pdf
+			//    size UINT16
+			//    buffer[size]{:sizeof(TPMU_HA)} BYTE
+
+			// get the length of the digest, first 2bytes is length of buffer
+			l := binary.BigEndian.Uint16(ppol.CommandPolicy[:2])
+			dgst := ppol.CommandPolicy[:l+2]
+
+			require.Equal(t, pcrDigestSegment, dgst)
+
+			d, err := tpm2.Unmarshal[tpm2.TPM2BDigest](dgst)
+			require.NoError(t, err)
+
+			require.Equal(t, pcrSelectionSegment, ppol.CommandPolicy[l+2:])
+
+			tc, err := tpm2.Unmarshal[tpm2.TPMLPCRSelection](ppol.CommandPolicy[l+2:]) // digest includes 2 byte size prefix
+			require.NoError(t, err)
+
+			_, err = tpm2.PolicyPCR{
+				PolicySession: sess.Handle(),
+				PcrDigest:     *d,
+				Pcrs:          *tc,
+			}.Execute(rwr)
+			require.NoError(t, err)
+
+		case int(tpm2.TPMCCPolicyAuthValue):
+			_, err = tpm2.PolicyAuthValue{
+				PolicySession: sess.Handle(),
+			}.Execute(rwr)
+			require.NoError(t, err)
+		default:
+			require.Fail(t, "Unsupported command parameter")
+		}
+	}
 
 	rspSign, err := tpm2.Sign{
 		KeyHandle: tpm2.AuthHandle{

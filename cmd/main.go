@@ -31,7 +31,9 @@ var (
 	// genkey
 	alg = flag.String("alg", "rsa", "key algorithm: rsa, ecdsa, aes or hmac")
 
-	pcrs = flag.String("pcrs", "", "pcr banks to bind the key to")
+	pcrs               = flag.String("pcrs", "", "pcr banks to bind the key to")
+	enablePolicySyntax = flag.Bool("enablePolicySyntax", false, "Enable policy syntax encoding")
+	commandCodePolicy  = flag.String("commandCodePolicy", "", "comma separated commandCode:hexPolicy (code1:hexPolicy1,code2:hexPolicy2)")
 
 	// rsa
 	exponent   = flag.Int("exponent", 65537, "RSA exponent")
@@ -89,11 +91,12 @@ func main() {
 		}
 
 		p, err := tpm2genkey.ToPEM(&tpm2genkey.ToPEMConfig{
-			Public:      pu,
-			Private:     pr,
-			Parent:      uint32(*parent),
-			Password:    []byte(*password),
-			Description: *description,
+			Public:          pu,
+			Private:         pr,
+			Parent:          uint32(*parent),
+			Password:        []byte(*password),
+			Description:     *description,
+			CommandCodeHash: *commandCodePolicy,
 		})
 		if err != nil {
 			fmt.Printf("tpm2genkey: error converting = %v\n", err)
@@ -150,33 +153,37 @@ func main() {
 			rwc.Close()
 		}()
 
-		var uintpcrs = make([]uint, len(strings.Split(*pcrs, ",")))
+		var uintpcrs []uint
 
-		for idx, i := range strings.Split(*pcrs, ",") {
-			if i != "" {
-				j, err := strconv.Atoi(i)
-				if err != nil {
-					fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
-					os.Exit(1)
+		if len(*pcrs) > 0 {
+			uintpcrs = make([]uint, len(strings.Split(*pcrs, ",")))
+			for idx, i := range strings.Split(*pcrs, ",") {
+				if i != "" {
+					j, err := strconv.Atoi(i)
+					if err != nil {
+						fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
+						os.Exit(1)
+					}
+					uintpcrs[idx] = uint(j)
 				}
-				uintpcrs[idx] = uint(j)
 			}
 		}
 
 		k, err := tpm2genkey.NewKey(&tpm2genkey.NewKeyConfig{
-			TPMDevice:   rwc,
-			Alg:         *alg,
-			Exponent:    *exponent,
-			Ownerpw:     []byte(*ownerpw),
-			Parentpw:    []byte(*parentpw),
-			Parent:      uint32(*parent),
-			Password:    []byte(*password),
-			RSAKeySize:  *rsakeysize,
-			Curve:       *curve,
-			Mode:        *aesmode,
-			PCRs:        uintpcrs,
-			AESKeySize:  *aeskeysize,
-			Description: *description,
+			TPMDevice:          rwc,
+			Alg:                *alg,
+			Exponent:           *exponent,
+			Ownerpw:            []byte(*ownerpw),
+			Parentpw:           []byte(*parentpw),
+			Parent:             uint32(*parent),
+			Password:           []byte(*password),
+			RSAKeySize:         *rsakeysize,
+			Curve:              *curve,
+			Mode:               *aesmode,
+			PCRs:               uintpcrs,
+			AESKeySize:         *aeskeysize,
+			Description:        *description,
+			EnablePolicySyntax: *enablePolicySyntax,
 		})
 		if err != nil {
 			fmt.Printf("tpm2genkey: problem creating key, %v \n", err)

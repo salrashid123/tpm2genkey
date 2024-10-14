@@ -29,6 +29,7 @@ The PEM output files are compliant with basic
 | **`-parentpw`** | passphrase for the TPM key parent (default: "") |
 | **`-description`** | description field for the PEM encoded keyfile (default: "") |
 | **`-pcrs`** | comma separated list of current pcr values to bind the key to (default: "") |
+| **`-commandCodePolicy`** | (tpm2pem) comma separated list of commandCode and hexPolicy command1:policy1,command2:policy2 (default: "") |
 | **`-in`** | input PEM key file to convert (default: `private.pem`) |
 | **`-public`** | Public key (`TPM2B_PUBLIC`) to import or export (requires --private) (default: "") |
 | **`-private`** | The (encrypted) private key (`TPM2B_PRIVATE`) to import or export. (requires --public) (default: "") |
@@ -67,12 +68,24 @@ To create new TPM-based `RSA|ECC|AES|HMAC` key which uses the default `OWNER` an
   # openssl rsa -provider tpm2  -provider default -in private.pem --text
 ```
 
-* `RSA` with userAuth and PCR
+* `RSA` with userAuth
 
 ```bash
   tpm2genkey --mode=create --alg=rsa --out=private.pem --password=foo
 
   openssl rsa -provider tpm2  -provider default -in private.pem --text --passin pass:foo
+```
+
+* `RSA` with PCR
+
+```bash
+  tpm2genkey --mode=create --alg=rsa --out=private.pem --pcrs=23 
+```
+
+* `RSA` with PCR and Password
+
+```bash
+  tpm2genkey --mode=create --alg=rsa --out=private.pem --password=foo --pcrs=23 
 ```
 
 * `ECDSA` wihout userAuth
@@ -213,7 +226,7 @@ $ python3 create.py
   000be2d3e58350c6fa46cd52db2856f739c9d9457f3949301c99993cd6bed1b5ef96
   000b0a42610e5ec573a45f726e394cdee678356b6b3756194e3f3035a2e58830e5af
 
-## crate H2 Template
+## create H2 Template
  printf '\x00\x00' > /tmp/unique.dat
  tpm2_createprimary -C o -G ecc  -g sha256 \
      -c primary.ctx \
@@ -257,6 +270,7 @@ If you'd rather test with software tpm first,
 
 ```bash
 rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
+sudo swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
 sudo swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear --log level=5
 
 ## for tpm2_tools
@@ -268,6 +282,16 @@ export TPM2OPENSSL_TCTI="swtpm:port=2321"
 
 ## then use this cli, set --tpm-path="127.0.0.1:2321"
 tpm2genkey --mode=create --alg=rsa --out=private.pem --tpm-path="127.0.0.1:2321"
+```
+
+#### go-tpm
+
+You can read the generated PEM files file using go-tpm as shown in the `example/` folder
+
+```bash
+## no passphrase:
+go run cmd/main.go --mode=create --alg=rsa --out=/tmp/private.pem --tpm-path="127.0.0.1:2321"
+go run main.go --keyfile=/tmp/private.pem --tpm-path="127.0.0.1:2321"
 ```
 
 #### PEM Keyfile format
@@ -282,7 +306,7 @@ decoded keys on TPM are readable as:
 export OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules/
 export TPM2OPENSSL_TCTI="swtpm:port=2321"
 
-$ openssl rsa -provider tpm2  -provider default -in rsatpm.pem -text
+$ openssl rsa -provider tpm2  -provider default -in private.pem -text
 
 Private-Key: (RSA 2048 bit, TPM 2.0)
 Modulus:
@@ -325,4 +349,61 @@ d71zvOwild71OLe/lvBqQlV3Hrk6Zvaed4C/38K3yPmICFR6YOfsFeDIAirzT+wp
 9WGF9fq9CNzlKZgXAMoYLA6ZthtHKWdUUUYyyK0+yCqeNb32E5jN3Mn3GVxX9tc5
 m5OgWpXX8bLqlRLY38P5J3HZOStjYxNBj5I3PdkvD7DFdlb7ZrJZoUg=
 -----END TSS2 PRIVATE KEY-----
+```
+
+The `--enablePolicySyntax` flag enables optional unsupported syntax described [here](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#name-key-policy-specification) but not officially adopted (see [tpm2-openssl/issues/120](https://github.com/tpm2-software/tpm2-openssl/issues/120)).
+
+Specifically, if you enable the flag, the password and policy get encoded as a policy structure.  In the example below, `017F` is the PCRPolicy and the hex value is the command parameters; the `016B` is PolicyAuthValue.  However, openssl3 does not support these fields yet.
+
+```bash
+$ go run cmd/main.go --mode=create --alg=rsa --out=private.pem --password=foo --pcrs=23 --enablePolicySyntax  --tpm-path="127.0.0.1:2321"
+
+$ openssl asn1parse -inform PEM -in private.pem
+    0:d=0  hl=4 l= 631 cons: SEQUENCE          
+    4:d=1  hl=2 l=   6 prim: OBJECT            :2.23.133.10.1.3
+   12:d=1  hl=2 l=  70 cons: cont [ 1 ]        
+   14:d=2  hl=2 l=  68 cons: SEQUENCE          
+   16:d=3  hl=2 l=  54 cons: SEQUENCE          
+   18:d=4  hl=2 l=   4 cons: cont [ 0 ]        
+   20:d=5  hl=2 l=   2 prim: INTEGER           :017F
+   24:d=4  hl=2 l=  46 cons: cont [ 1 ]        
+   26:d=5  hl=2 l=  44 prim: OCTET STRING      [HEX DUMP]:0020E2F61C3F71D1DEFD3FA999DFA36953755C690689799962B48BEBD836974E8CF900000001000B03000080
+   72:d=3  hl=2 l=  10 cons: SEQUENCE          
+   74:d=4  hl=2 l=   4 cons: cont [ 0 ]        
+   76:d=5  hl=2 l=   2 prim: INTEGER           :016B
+   80:d=4  hl=2 l=   2 cons: cont [ 1 ]        
+   82:d=5  hl=2 l=   0 prim: OCTET STRING      
+   84:d=1  hl=2 l=   4 prim: INTEGER           :40000001
+   90:d=1  hl=4 l= 314 prim: OCTET STRING      [HEX DUMP]:01380001000B00040072002034E22A9DA4D5CE704150EFFD67FB6994D5CFA1A6E2A04AA4514093F0F4D319D000100014000B0800000100010100B5CBC3568DE3D6245241EE436D4E9D2722D066488929610AE3BE558247D9F600F90D5CAA295B808FF5C61FA09524ED0A6EECB7044A3D620995510D1397050CF876D8E16591DC3D28A0416B1DEE7F4FFAC8A4CEDE200FEB82AB2CDC7976EF77D7E1ABFC8914B46719B8913B334D46F1A3301437C7C45A5C0570B682613220A9220598E0C06CBDE9BEAFBB5C2B240878B70727E39D753FE87F38A1E78856D8D094CE4FED4B57222F4596CFE1ADB70E15EE3B335AF8BB90A53ED5E55A8B5CBD368896154583437037F8CDA9AB180E7879C2A116303826F4CEA3DBA24A62FD23AB601C4FE7FCBA9392D3B9F26378EEDE77C8BC4B46E2782C9B5091101C79174E9993
+  408:d=1  hl=3 l= 224 prim: OCTET STRING      [HEX DUMP]:00DE0020B4AC771D49800F4C6FB3450B118451A8EC1D47AA9D431B6AE1478B92D28D6AF900100AD2BA925F88B24485A05B4D6760B18E8E9E736DC1C6F9FA5A329839DC9FF3468C27DDBCEA358E7B0A1D8B7C28FBFFBBC968B7C94CA22B3A7EBF3FBFC2EDF8A285626DE449EA2517639F3ED238FAE0F459179F32E7F7D8C6E84CD4C462286D62AAE4ACFFED8702E580723FEF0056755FC17F94B0385B909736A313A6FA4CB267FB32FFB87CE21BC697DB5A40FA698A59D50BACF4BA3877F1159842E48579FC9D58BE12ED0B0B463D33FCEF08D37E541F541547800617C2812B35
+```
+
+Note, you can also convert a regular TPM pub/private key to PEM with a command policy if you specify `--commandCodePolicy` for the `tpm2pem` command
+
+In the following, you're adding in a Policy to the PEM file manually (you need to have the command parameters handy as shown above)
+
+```bash
+## create H2 Template
+printf '\x00\x00' > /tmp/unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256 \
+     -c primary.ctx \
+     -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u /tmp/unique.dat
+
+tpm2_startauthsession --policy-session -S session.dat
+tpm2_pcrread sha256:23 -o pcr23_val.bin
+tpm2_policypcr -S session.dat -l sha256:23  -L policy.dat -f pcr23_val.bin
+tpm2_policyauthvalue -S session.dat -L policy.dat
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l  
+
+tpm2_create -G rsa2048:rsassa:null -g sha256  -u key.pub -r key.prv  -C primary.ctx -L policy.dat -p foo
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l  
+tpm2_load -C primary.ctx -u key.pub -r key.prv -n key.name -c key.ctx
+    
+# PolicyPCR 017F->383  
+# PolicyAuthValue 016B->363
+go run cmd/main.go --mode=tpm2pem --public=key.pub --private=key.prv \
+    --commandCodePolicy=383:0020e2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf900000001000b03000080,363: \
+    --out=private.pem 
+
+openssl asn1parse -inform PEM -in private.pem
 ```

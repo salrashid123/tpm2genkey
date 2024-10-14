@@ -15,20 +15,21 @@ const ()
 var ()
 
 type NewKeyConfig struct {
-	Debug       bool               // debug logging
-	TPMDevice   io.ReadWriteCloser // initialized transport for the TPM
-	Alg         string             // aes, rsa, ecdsa or hmac
-	Exponent    int                // for rsa 65537
-	Ownerpw     []byte
-	Parentpw    []byte
-	Parent      uint32 // Parent handle
-	Password    []byte // auth password
-	RSAKeySize  int    // for rsa 2048
-	Curve       string // for ecdsa [secp224r1|prime256v1|secp384r1|secp521r1"
-	Mode        string // for aes  [cfb|crt|ofb|cbc|ecb]
-	AESKeySize  int    // for aes, 128
-	PCRs        []uint // PCR banks to bind to
-	Description string
+	Debug              bool               // debug logging
+	TPMDevice          io.ReadWriteCloser // initialized transport for the TPM
+	Alg                string             // aes, rsa, ecdsa or hmac
+	Exponent           int                // for rsa 65537
+	Ownerpw            []byte
+	Parentpw           []byte
+	Parent             uint32 // Parent handle
+	Password           []byte // auth password
+	RSAKeySize         int    // for rsa 2048
+	Curve              string // for ecdsa [secp224r1|prime256v1|secp384r1|secp521r1"
+	Mode               string // for aes  [cfb|crt|ofb|cbc|ecb]
+	AESKeySize         int    // for aes, 128
+	PCRs               []uint // PCR banks to bind to
+	Description        string
+	EnablePolicySyntax bool // enable policy syntax https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#section-4.1
 }
 
 func NewKey(h *NewKeyConfig) ([]byte, error) {
@@ -50,23 +51,50 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 		}
 	}()
 
-	sel := tpm2.TPMLPCRSelection{
-		PCRSelections: []tpm2.TPMSPCRSelection{
-			{
-				Hash:      tpm2.TPMAlgSHA256,
-				PCRSelect: tpm2.PCClientCompatible.PCRs(h.PCRs...),
+	var commandParameter []byte
+	if len(h.PCRs) > 0 {
+		sel := tpm2.TPMLPCRSelection{
+			PCRSelections: []tpm2.TPMSPCRSelection{
+				{
+					Hash:      tpm2.TPMAlgSHA256,
+					PCRSelect: tpm2.PCClientCompatible.PCRs(h.PCRs...),
+				},
 			},
-		},
-	}
+		}
 
-	_, err = tpm2.PolicyPCR{
-		PolicySession: sess.Handle(),
-		Pcrs: tpm2.TPMLPCRSelection{
-			PCRSelections: sel.PCRSelections,
-		},
-	}.Execute(rwr)
-	if err != nil {
-		return nil, fmt.Errorf("error executing PolicyPCR: %v", err)
+		expectedDigest, err := getExpectedPCRDigest(rwr, sel, tpm2.TPMAlgSHA256)
+		if err != nil {
+			return nil, fmt.Errorf("ERROR:  could not get PolicySession: %v", err)
+		}
+
+		_, err = tpm2.PolicyPCR{
+			PolicySession: sess.Handle(),
+			Pcrs: tpm2.TPMLPCRSelection{
+				PCRSelections: sel.PCRSelections,
+			},
+			PcrDigest: tpm2.TPM2BDigest{
+				Buffer: expectedDigest,
+			},
+		}.Execute(rwr)
+		if err != nil {
+			return nil, fmt.Errorf("error executing PolicyPCR: %v", err)
+		}
+
+		// 23.7 TPM2_PolicyPCR https://trustedcomputinggroup.org/wp-content/uploads/TPM-Rev-2.0-Part-3-Commands-01.38.pdf
+		pcrSelectionSegment := tpm2.Marshal(sel)
+		pcrDigestSegment := tpm2.Marshal(tpm2.TPM2BDigest{
+			Buffer: expectedDigest,
+		})
+
+		commandParameter = append(pcrDigestSegment, pcrSelectionSegment...)
+	}
+	if h.Password != nil {
+		_, err = tpm2.PolicyAuthValue{
+			PolicySession: sess.Handle(),
+		}.Execute(rwr)
+		if err != nil {
+			return nil, fmt.Errorf("error executing PolicyPCR: %v", err)
+		}
 	}
 
 	pgd, err := tpm2.PolicyGetDigest{
@@ -215,7 +243,9 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 				UserWithAuth:        true,
 				SignEncrypt:         true,
 			},
-			AuthPolicy: tpm2.TPM2BDigest{},
+			AuthPolicy: tpm2.TPM2BDigest{
+				Buffer: pgd.PolicyDigest.Buffer,
+			},
 			Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgKeyedHash,
 				&tpm2.TPMSKeyedHashParms{
 					Scheme: tpm2.TPMTKeyedHashScheme{
@@ -312,6 +342,36 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 		return nil, fmt.Errorf("tpm2-genkey: unsupported parent handle %d\n", h.Parent)
 	}
 
+	// var authpol []*keyfile.TPMAuthPolicy
+	// if len(h.PCRs) > 0 {
+	// 	var pol []*keyfile.TPMPolicy
+	// 	pol = append(pol, &keyfile.TPMPolicy{
+	// 		CommandCode:   int(tpm2.TPMCCPolicyPCR),
+	// 		CommandPolicy: pgd.PolicyDigest.Buffer,
+	// 	})
+	// 	authpol = append(authpol, &keyfile.TPMAuthPolicy{
+	// 		Name:   h.AuthPolicyName,
+	// 		Policy: pol,
+	// 	})
+	// }
+
+	var pol []*keyfile.TPMPolicy
+	if h.EnablePolicySyntax {
+		if len(h.PCRs) > 0 {
+			pol = append(pol, &keyfile.TPMPolicy{
+				CommandCode:   int(tpm2.TPMCCPolicyPCR),
+				CommandPolicy: commandParameter,
+			})
+		}
+
+		if len(h.Password) > 0 {
+			pol = append(pol, &keyfile.TPMPolicy{
+				CommandCode:   int(tpm2.TPMCCPolicyAuthValue),
+				CommandPolicy: nil,
+			})
+		}
+	}
+
 	kf := keyfile.NewTPMKey(
 		keyfile.OIDLoadableKey,
 		keyresponse.OutPublic,
@@ -319,6 +379,7 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 		keyfile.WithParent(tpm2.TPMHandle(h.Parent)),
 		keyfile.WithUserAuth(h.Password),
 		keyfile.WithDescription(h.Description),
+		keyfile.WithPolicy(pol),
 	)
 
 	keyFileBytes := new(bytes.Buffer)
@@ -328,4 +389,29 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 	}
 
 	return keyFileBytes.Bytes(), nil
+}
+
+func getExpectedPCRDigest(thetpm transport.TPM, selection tpm2.TPMLPCRSelection, hashAlg tpm2.TPMAlgID) ([]byte, error) {
+	pcrRead := tpm2.PCRRead{
+		PCRSelectionIn: selection,
+	}
+
+	pcrReadRsp, err := pcrRead.Execute(thetpm)
+	if err != nil {
+		return nil, err
+	}
+
+	var expectedVal []byte
+	for _, digest := range pcrReadRsp.PCRValues.Digests {
+		expectedVal = append(expectedVal, digest.Buffer...)
+	}
+
+	cryptoHashAlg, err := hashAlg.Hash()
+	if err != nil {
+		return nil, err
+	}
+
+	hash := cryptoHashAlg.New()
+	hash.Write(expectedVal)
+	return hash.Sum(nil), nil
 }
