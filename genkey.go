@@ -8,6 +8,7 @@ import (
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
+	"github.com/salrashid123/tpm2genkey/util"
 )
 
 const ()
@@ -51,7 +52,8 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 		}
 	}()
 
-	var commandParameter []byte
+	var commandParameterPCR []byte
+	var commandParameterAuth []byte
 	if len(h.PCRs) > 0 {
 		sel := tpm2.TPMLPCRSelection{
 			PCRSelections: []tpm2.TPMSPCRSelection{
@@ -67,7 +69,7 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 			return nil, fmt.Errorf("ERROR:  could not get PolicySession: %v", err)
 		}
 
-		_, err = tpm2.PolicyPCR{
+		pol := tpm2.PolicyPCR{
 			PolicySession: sess.Handle(),
 			Pcrs: tpm2.TPMLPCRSelection{
 				PCRSelections: sel.PCRSelections,
@@ -75,25 +77,36 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 			PcrDigest: tpm2.TPM2BDigest{
 				Buffer: expectedDigest,
 			},
-		}.Execute(rwr)
+		}
+
+		_, err = pol.Execute(rwr)
 		if err != nil {
 			return nil, fmt.Errorf("error executing PolicyPCR: %v", err)
 		}
 
 		// 23.7 TPM2_PolicyPCR https://trustedcomputinggroup.org/wp-content/uploads/TPM-Rev-2.0-Part-3-Commands-01.38.pdf
-		pcrSelectionSegment := tpm2.Marshal(sel)
-		pcrDigestSegment := tpm2.Marshal(tpm2.TPM2BDigest{
-			Buffer: expectedDigest,
-		})
+		// pcrSelectionSegment := tpm2.Marshal(sel)
+		// pcrDigestSegment := tpm2.Marshal(tpm2.TPM2BDigest{
+		// 	Buffer: expectedDigest,
+		// })
+		// commandParameterPCR = append(pcrDigestSegment, pcrSelectionSegment...)
 
-		commandParameter = append(pcrDigestSegment, pcrSelectionSegment...)
+		commandParameterPCR, err = util.CPBytes(pol)
+		if err != nil {
+			return nil, fmt.Errorf("error getting policy command bytes: %v", err)
+		}
+
 	}
 	if h.Password != nil {
 		_, err = tpm2.PolicyAuthValue{
 			PolicySession: sess.Handle(),
 		}.Execute(rwr)
 		if err != nil {
-			return nil, fmt.Errorf("error executing PolicyPCR: %v", err)
+			return nil, fmt.Errorf("error executing PolicyAuthValue: %v", err)
+		}
+		commandParameterAuth, err = util.CPBytes(tpm2.PolicyAuthValue{PolicySession: sess.Handle()})
+		if err != nil {
+			return nil, fmt.Errorf("error getting policy command bytes: %v", err)
 		}
 	}
 
@@ -360,14 +373,14 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 		if len(h.PCRs) > 0 {
 			pol = append(pol, &keyfile.TPMPolicy{
 				CommandCode:   int(tpm2.TPMCCPolicyPCR),
-				CommandPolicy: commandParameter,
+				CommandPolicy: commandParameterPCR,
 			})
 		}
 
 		if len(h.Password) > 0 {
 			pol = append(pol, &keyfile.TPMPolicy{
 				CommandCode:   int(tpm2.TPMCCPolicyAuthValue),
-				CommandPolicy: nil,
+				CommandPolicy: commandParameterAuth,
 			})
 		}
 	}

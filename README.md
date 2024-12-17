@@ -407,3 +407,59 @@ go run cmd/main.go --mode=tpm2pem --public=key.pub --private=key.prv \
 
 openssl asn1parse -inform PEM -in private.pem
 ```
+
+### Policy Command Parameters
+
+`tpm2genkey.util` package contains functions which allow conversion to/from the policy command bytes.  The marshalling and unmarshalling code is taken partially from [go-tpm](https://github.com/google/go-tpm)
+
+>>> Note, the commands below do not support "Policy_Authorize" (its a todo, just haven't figured out how to place it into a library).  For additional examples, see:  
+
+* [https://github.com/salrashid123/tpm2/tree/master/policy_gen](https://github.com/salrashid123/tpm2/tree/master/policy_gen)
+
+#### PolicyCommand -> bytes
+
+To convert a TPM policy to the command bytes use `util.CPBytes()`:
+
+```golang
+		pol := tpm2.PolicyPCR{
+			PolicySession: sess.Handle(),
+			Pcrs: tpm2.TPMLPCRSelection{
+				PCRSelections: sel.PCRSelections,
+			},
+			PcrDigest: tpm2.TPM2BDigest{
+				Buffer: expectedDigest,
+			},
+		}
+
+		_, err = pol.Execute(rwr)
+
+		// 23.7 TPM2_PolicyPCR https://trustedcomputinggroup.org/wp-content/uploads/TPM-Rev-2.0-Part-3-Commands-01.38.pdf
+		// pcrSelectionSegment := tpm2.Marshal(sel)
+		// pcrDigestSegment := tpm2.Marshal(tpm2.TPM2BDigest{
+		// 	Buffer: expectedDigest,
+		// })
+		// commandParameterPCR = append(pcrDigestSegment, pcrSelectionSegment...)
+
+		commandParameterPCR, err = util.CPBytes(pol)
+
+    // gives 0020e2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf900000001000b03000080
+```
+
+#### bytes -> PolicyCommand
+
+To convert bytes to a provided TPM policy, use `util.ReqParameters(parms []byte, rspStruct any)`
+
+```golang
+		commandParameter:= "0020e2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf900000001000b03000080"
+
+		sess, cleanup, err := tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16, []tpm2.AuthOption{tpm2.Auth([]byte(nil))}...)
+		defer cleanup()
+
+		policy := &tpm2.PolicyPCR{
+			PolicySession: sess.Handle(),
+		}
+
+		err = util.ReqParameters(commandParameter, policy)
+
+		_, err = tp2.Execute(rwr)
+```

@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -19,6 +18,8 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpmutil"
+
+	"github.com/salrashid123/tpm2genkey/util"
 )
 
 const ()
@@ -164,35 +165,64 @@ func main() {
 			//    size UINT16
 			//    buffer[size]{:sizeof(TPMU_HA)} BYTE
 
-			// get the length of the digest, first 2bytes is length of buffer
-			l := binary.BigEndian.Uint16(ppol.CommandPolicy[:2])
-			dgst := ppol.CommandPolicy[:l+2]
-
-			d, err := tpm2.Unmarshal[tpm2.TPM2BDigest](dgst)
-			if err != nil {
-				log.Fatalf("error unmarshal TPM2BDigest: %v", err)
-			}
-
-			tc, err := tpm2.Unmarshal[tpm2.TPMLPCRSelection](ppol.CommandPolicy[l+2:]) // digest includes 2 byte size prefix
-			if err != nil {
-				log.Fatalf("error unmarshalling TPMLPCRSelection: %v", err)
-			}
-			_, err = tpm2.PolicyPCR{
+			policy := &tpm2.PolicyPCR{
 				PolicySession: psess.Handle(),
-				PcrDigest:     *d,
-				Pcrs:          *tc,
-			}.Execute(rwr)
+			}
+
+			err = util.ReqParameters(ppol.CommandPolicy, policy)
 			if err != nil {
 				log.Fatalf("setting up policypcr: %v", err)
 			}
 
+			_, err = policy.Execute(rwr)
+			if err != nil {
+				log.Fatalf("setting up policypcr: %v", err)
+			}
+
+			// // get the length of the digest, first 2bytes is length of buffer
+			// l := binary.BigEndian.Uint16(ppol.CommandPolicy[:2])
+			// dgst := ppol.CommandPolicy[:l+2]
+
+			// d, err := tpm2.Unmarshal[tpm2.TPM2BDigest](dgst)
+			// if err != nil {
+			// 	log.Fatalf("error unmarshal TPM2BDigest: %v", err)
+			// }
+
+			// tc, err := tpm2.Unmarshal[tpm2.TPMLPCRSelection](ppol.CommandPolicy[l+2:]) // digest includes 2 byte size prefix
+			// if err != nil {
+			// 	log.Fatalf("error unmarshalling TPMLPCRSelection: %v", err)
+			// }
+			// _, err = tpm2.PolicyPCR{
+			// 	PolicySession: psess.Handle(),
+			// 	PcrDigest:     *d,
+			// 	Pcrs:          *tc,
+			// }.Execute(rwr)
+			// if err != nil {
+			// 	log.Fatalf("setting up policypcr: %v", err)
+			// }
+
 		case int(tpm2.TPMCCPolicyAuthValue):
-			_, err = tpm2.PolicyAuthValue{
+
+			policy := &tpm2.PolicyAuthValue{
 				PolicySession: psess.Handle(),
-			}.Execute(rwr)
+			}
+
+			err = util.ReqParameters(ppol.CommandPolicy, policy)
 			if err != nil {
 				log.Fatalf("setting up policyauthvalue: %v", err)
 			}
+
+			_, err = policy.Execute(rwr)
+			if err != nil {
+				log.Fatalf("setting up policyauthvalue: %v", err)
+			}
+
+			// _, err = tpm2.PolicyAuthValue{
+			// 	PolicySession: psess.Handle(),
+			// }.Execute(rwr)
+			// if err != nil {
+			// 	log.Fatalf("setting up policyauthvalue: %v", err)
+			// }
 		default:
 			log.Fatalf("Unsupported command parameter")
 		}

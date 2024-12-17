@@ -1,5 +1,3 @@
-github.com/foxboron/go-tpm-keyfiles v0.0.0-20240620184055-b891af1cbc88 h1:MXG/QPdIbe7ez9WM7q+iXedMjDwqMCfqkiAPoI+m2bA=
-github.com/foxboron/go-tpm-keyfiles v0.0.0-20240620184055-b891af1cbc88/go.mod h1:uAyTlAUxchYuiFjTHmuIEJ4nGSm7iOPaGcAyA81fJ80=
 github.com/foxboron/go-tpm-keyfiles v0.0.0-20240805214234-f870d6f1ff68 h1:u1Lbb2hWuU302IAaCccDkzPWLgpMBfvva/EMDutEUXk=
 github.com/foxboron/go-tpm-keyfiles v0.0.0-20240805214234-f870d6f1ff68/go.mod h1:uAyTlAUxchYuiFjTHmuIEJ4nGSm7iOPaGcAyA81fJ80=
 github.com/foxboron/swtpm_test v0.0.0-20230726224112-46aaafdf7006 h1:50sW4r0PcvlpG4PV8tYh2RVCapszJgaOLRCS2subvV4=
