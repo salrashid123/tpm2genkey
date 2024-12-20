@@ -5,6 +5,7 @@ package util
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/google/go-tpm/tpm2/transport"
 )
 
 const (
@@ -702,7 +704,7 @@ func CPBytes[R any](cmd tpm2.Command[R, *R]) ([]byte, error) {
 
 	//  TPM2_PolicyAuthorize MUST be TPM2B_PUBLIC keySign, TPM2B_DIGEST policyRef, TPMT_SIGNATURE policySignature.
 	if cmd.Command() == tpm2.TPMCCPolicyAuthorize {
-		return nil, errors.New("Unimplemented")
+		return nil, errors.New("Unimplemented; use CPBytesAuthorize()")
 	}
 
 	parms := taggedMembers(reflect.ValueOf(cmd), "handle", true)
@@ -724,6 +726,22 @@ func CPBytes[R any](cmd tpm2.Command[R, *R]) ([]byte, error) {
 		}
 	}
 	return result.Bytes(), nil
+}
+
+func CPBytesPolicyAuthorize(policyRefString string, signerTemplate tpm2.TPMTPublic, sig tpm2.TPMTSignature) ([]byte, error) {
+
+	rsa_TPMTPublic_bytes := tpm2.Marshal(signerTemplate)
+	rsa_TPM2BPublic := tpm2.BytesAs2B[tpm2.TPM2BPublic](rsa_TPMTPublic_bytes)
+	rsa_TPM2BPublic_bytes := tpm2.Marshal(rsa_TPM2BPublic)
+
+	policyRefDigestSegment := tpm2.Marshal(tpm2.TPM2BDigest{
+		Buffer: []byte(policyRefString),
+	})
+	sig_bytes := tpm2.Marshal(sig)
+
+	policyCommand := append(rsa_TPM2BPublic_bytes, policyRefDigestSegment...)
+	policyCommand = append(policyCommand, sig_bytes...)
+	return policyCommand, nil
 }
 
 // ReqParameters convert bytes to a TPM Policy
@@ -783,6 +801,80 @@ func ReqParametersPolicySecret(parms []byte, rspStruct *tpm2.PolicySecret) (tpm2
 		},
 		NonceTPM:      rspStruct.NonceTPM,
 		PolicySession: rspStruct.PolicySession,
+	}
+	return r, nil
+}
+
+func ReqParametersPolicyAuthorize(rwr transport.TPM, parms []byte, approvedPolicy tpm2.TPM2BDigest, rspStruct *tpm2.PolicyAuthorize) (tpm2.PolicyAuthorize, error) {
+
+	keyLengthBytes := parms[:2]
+	tp, err := tpm2.Unmarshal[tpm2.TPM2BPublic](parms[:2+binary.BigEndian.Uint16(keyLengthBytes)])
+	if err != nil {
+		return tpm2.PolicyAuthorize{}, err
+	}
+	reGenKeyPublic, err := tp.Contents()
+	if err != nil {
+		return tpm2.PolicyAuthorize{}, err
+	}
+
+	l2, err := tpm2.LoadExternal{
+		InPublic:  tpm2.New2B(*reGenKeyPublic),
+		Hierarchy: tpm2.TPMRHOwner,
+	}.Execute(rwr)
+	if err != nil {
+		return tpm2.PolicyAuthorize{}, err
+	}
+	defer func() {
+		flush := tpm2.FlushContext{
+			FlushHandle: l2.ObjectHandle,
+		}
+		_, err = flush.Execute(rwr)
+	}()
+
+	remainder := parms[2+binary.BigEndian.Uint16(keyLengthBytes):]
+	//extract policyRefDigestSegment
+	lenpolicyRefDigestSegment := remainder[:2]
+	dda, err := tpm2.Unmarshal[tpm2.TPM2BDigest](remainder[:2+binary.BigEndian.Uint16(lenpolicyRefDigestSegment)])
+	if err != nil {
+		return tpm2.PolicyAuthorize{}, err
+	}
+
+	toDigest2 := append(approvedPolicy.Buffer, dda.Buffer...)
+	msgHash2 := sha256.New()
+	_, err = msgHash2.Write(toDigest2)
+	if err != nil {
+		return tpm2.PolicyAuthorize{}, err
+	}
+	msgHashpcrSum2 := msgHash2.Sum(nil)
+
+	//extract TPMTSignature
+
+	regenSig := remainder[2+binary.BigEndian.Uint16(lenpolicyRefDigestSegment):]
+
+	tts, err := tpm2.Unmarshal[tpm2.TPMTSignature](regenSig)
+	if err != nil {
+		return tpm2.PolicyAuthorize{}, err
+	}
+
+	// now ready
+
+	v, err := tpm2.VerifySignature{
+		KeyHandle: l2.ObjectHandle,
+		Digest: tpm2.TPM2BDigest{
+			Buffer: msgHashpcrSum2,
+		},
+		Signature: *tts,
+	}.Execute(rwr)
+	if err != nil {
+		return tpm2.PolicyAuthorize{}, err
+	}
+
+	r := tpm2.PolicyAuthorize{
+		PolicySession:  rspStruct.PolicySession,
+		ApprovedPolicy: approvedPolicy, // use the expected digest we want to sign
+		KeySign:        l2.Name,
+		PolicyRef:      *dda,
+		CheckTicket:    v.Validation,
 	}
 	return r, nil
 }
