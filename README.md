@@ -29,7 +29,8 @@ The PEM output files are compliant with basic
 | **`-parentpw`** | passphrase for the TPM key parent (default: "") |
 | **`-description`** | description field for the PEM encoded keyfile (default: "") |
 | **`-pcrs`** | comma separated list of current pcr values to bind the key to (default: "") |
-| **`-commandCodePolicy`** | (tpm2pem) comma separated list of commandCode and hexPolicy command1:policy1,command2:policy2 (default: "") |
+| **`-policy`** | (tpm2pem) TPMPolicy as JSON to encode into the PEM |
+| **`-authpolicy`** | (tpm2pem) TPMAuthPolicy as JSON to encode into the PEM  (default: "") |
 | **`-in`** | input PEM key file to convert (default: `private.pem`) |
 | **`-public`** | Public key (`TPM2B_PUBLIC`) to import or export (requires --private) (default: "") |
 | **`-private`** | The (encrypted) private key (`TPM2B_PRIVATE`) to import or export. (requires --public) (default: "") |
@@ -367,18 +368,18 @@ $ openssl asn1parse -inform PEM -in private.pem
    18:d=4  hl=2 l=   4 cons: cont [ 0 ]        
    20:d=5  hl=2 l=   2 prim: INTEGER           :017F
    24:d=4  hl=2 l=  46 cons: cont [ 1 ]        
-   26:d=5  hl=2 l=  44 prim: OCTET STRING      [HEX DUMP]:0020E2F61C3F71D1DEFD3FA999DFA36953755C690689799962B48BEBD836974E8CF900000001000B03000080
+   26:d=5  hl=2 l=  44 prim: OCTET STRING      [HEX DUMP]:002066687AADF862BD776C8FC18B8E9F8E20089714856EE233B3902A591D0D5F292500000001000B03000080
    72:d=3  hl=2 l=  10 cons: SEQUENCE          
    74:d=4  hl=2 l=   4 cons: cont [ 0 ]        
    76:d=5  hl=2 l=   2 prim: INTEGER           :016B
    80:d=4  hl=2 l=   2 cons: cont [ 1 ]        
    82:d=5  hl=2 l=   0 prim: OCTET STRING      
    84:d=1  hl=2 l=   4 prim: INTEGER           :40000001
-   90:d=1  hl=4 l= 314 prim: OCTET STRING      [HEX DUMP]:01380001000B00040072002034E22A9DA4D5CE704150EFFD67FB6994D5CFA1A6E2A04AA4514093F0F4D319D000100014000B0800000100010100B5CBC3568DE3D6245241EE436D4E9D2722D066488929610AE3BE558247D9F600F90D5CAA295B808FF5C61FA09524ED0A6EECB7044A3D620995510D1397050CF876D8E16591DC3D28A0416B1DEE7F4FFAC8A4CEDE200FEB82AB2CDC7976EF77D7E1ABFC8914B46719B8913B334D46F1A3301437C7C45A5C0570B682613220A9220598E0C06CBDE9BEAFBB5C2B240878B70727E39D753FE87F38A1E78856D8D094CE4FED4B57222F4596CFE1ADB70E15EE3B335AF8BB90A53ED5E55A8B5CBD368896154583437037F8CDA9AB180E7879C2A116303826F4CEA3DBA24A62FD23AB601C4FE7FCBA9392D3B9F26378EEDE77C8BC4B46E2782C9B5091101C79174E9993
-  408:d=1  hl=3 l= 224 prim: OCTET STRING      [HEX DUMP]:00DE0020B4AC771D49800F4C6FB3450B118451A8EC1D47AA9D431B6AE1478B92D28D6AF900100AD2BA925F88B24485A05B4D6760B18E8E9E736DC1C6F9FA5A329839DC9FF3468C27DDBCEA358E7B0A1D8B7C28FBFFBBC968B7C94CA22B3A7EBF3FBFC2EDF8A285626DE449EA2517639F3ED238FAE0F459179F32E7F7D8C6E84CD4C462286D62AAE4ACFFED8702E580723FEF0056755FC17F94B0385B909736A313A6FA4CB267FB32FFB87CE21BC697DB5A40FA698A59D50BACF4BA3877F1159842E48579FC9D58BE12ED0B0B463D33FCEF08D37E541F541547800617C2812B35
+   90:d=1  hl=4 l= 314 prim: OCTET STRING      [HEX DUMP]:01380001000B00040072002057689D20ACC2066A79FB75DA85C049B4C332FFEEFF1F84F67F8E6BD815B4C99400100014000B0800000100010100AECE7C00CB73D940DD5FD279FC94260E5E09A26A946AD8ADD3A6DB52BBE6C7017139EA65E6486FDEEF58C85954461C0F8AF728E4061A3076BC7479A1217F2A4309DE826A6F2C847BFFAEEE8D79513FD86EB9D51B346111D10D4EF00A47C3B4555754FDEEFBEB3CB717CA9E276A264B4B144C5B3CE4F7A1B7F2D3B6C5D118BA164FB57289C15FA7950A9C6714195D12433C9B87360AFA236B4C4ED6E36C1F62D9E3EAC32A942182BBA6C7A7800E0903149A536B0E084FB9CEA8DE461873E990FE3011765C1C0578308300F3307E50C30847512B958BA5C407C0EBE0E7ED6E1E2CF7299ECB8639546D5F483D7008188C10D0395BF380B0FB3EB5623F94483E6045
+  408:d=1  hl=3 l= 224 prim: OCTET STRING      [HEX DUMP]:00DE002002140C58F14F5A4B36766B4037AAA8B385835A9242BD397680D6A9E43BD434090010D2862ACA634916B8E1C08BDA76EFDFBE33ED4E6BD75F07ECFFD7BD2067E08C92E9748C954636C923C4C140F39EAEF97A9C9B91BC406996838DE96648B79726EC222F9890613CCB6497810594172D84CD1AA641D4BB2322977E43AEE8EC25B1454DD1F88AEF62968AFA4C12CB15FE16D77F6688A68A9C044BDDCC765FF966E9E8D635AF0E90309D7DC4E01BE29091B6434A23DD6DDAF664108B167618AD1C5DC18A7453A3BE7FD373D57C7DACDC17CCFFBDB1673A4FA94891D9F5
 ```
 
-Note, you can also convert a regular TPM pub/private key to PEM with a command policy if you specify `--commandCodePolicy` for the `tpm2pem` command
+Note, you can also convert a regular TPM pub/private key to PEM with a command policy if you specify `--policy=` or `--authPolicy=` for the `tpm2pem` command
 
 In the following, you're adding in a Policy to the PEM file manually (you need to have the command parameters handy as shown above)
 
@@ -398,19 +399,45 @@ tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
 tpm2_create -G rsa2048:rsassa:null -g sha256  -u key.pub -r key.prv  -C primary.ctx -L policy.dat -p foo
 tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l  
 tpm2_load -C primary.ctx -u key.pub -r key.prv -n key.name -c key.ctx
-    
+
+## i encoded the command sequence above into `example/policy/policy.json`    
 # PolicyPCR 017F->383  
 # PolicyAuthValue 016B->363
 go run cmd/main.go --mode=tpm2pem --public=key.pub --private=key.prv \
-    --commandCodePolicy=383:0020e2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf900000001000b03000080,363: \
-    --out=private.pem 
+    --policy=example/policy/policy.json --password=foo --out=private.pem
 
 openssl asn1parse -inform PEM -in private.pem
 ```
 
+where `policy.json` is formatted using `CommandPolicy` as base64 (`002066687AADF862BD776C8FC18B8E9F8E20089714856EE233B3902A591D0D5F292500000001000B03000080` -> `ACBmaHqt+GK9d2yPwYuOn44gCJcUhW7iM7OQKlkdDV8pJQAAAAEACwMAAIA=`)
+
+```json
+{
+    "policy": [
+      {
+        "CommandCode": 383,
+        "CommandPolicy": "ACBmaHqt+GK9d2yPwYuOn44gCJcUhW7iM7OQKlkdDV8pJQAAAAEACwMAAIA="
+      },
+      {
+        "CommandCode": 363,
+        "CommandPolicy": ""
+      }
+    ]
+}
+```
+
+Now, to use it
+
+```bash
+cd example/
+go run policysyntax/main.go --keyfile=../private.pem --password=foo --tpm-path="127.0.0.1:2321"
+```
+
+You can generate basic `CommandPolicy` values using the `tpm2genkey.util` package described immediately below.
+
 ### Policy Command Parameters
 
-`tpm2genkey.util` package contains functions which allow conversion to/from the policy command bytes.  The marshalling and unmarshalling code is taken partially from [go-tpm](https://github.com/google/go-tpm)
+`tpm2genkey.util` package contains functions which allow *certain* conversions to/from the policy command bytes.  The marshalling and unmarshalling code is taken partially from [go-tpm](https://github.com/google/go-tpm)
 
 >>> Note, the commands below do not support "Policy_Authorize" (its a todo, just haven't figured out how to place it into a library).  For additional examples, see:  
 

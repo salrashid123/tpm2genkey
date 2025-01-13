@@ -1,0 +1,17 @@
+{
+  "authpolicy": [
+    {
+      "Name": "policy1",
+      "Policy": [
+        {
+          "CommandCode": 383,
+          "CommandPolicy": "AAAAAAABAAsDAACA"
+        },
+        {
+          "CommandCode": 362,
+          "CommandPolicy": "ARYAAQALAAYAQAAAABAAEAgAAAEAAQEA4FJVQw2iQzO5E9/H5zs97OaIlhVfVc18zVQkLq6rC177uLrnhxjfqh62ktFBDgVRvWTEjkLUBEBmQZf13RUmjG4PWK2kZ5O2hNj63v1afvkM1gFttVuHlX+YF3kAZMziM2/oDLlPwLyiWp1N5suGjs6l+83GiASIyYe6JIZHqR0Etjs2/CNk6fqkIqeCoS82zQiQeb2BJ1UqMLO/Kg5yiseXULXK1bK3+ox/vHDwfI9BqOnDVgr3P5VjfVRqwpfNlCJvTEYxKDj3/44EnYvfD+BzbVES8BXIHykeddkItjz393EfweyGsP0zHaPFjxzA/wusMmwEa/8Uozj4n7DZvQAHZm9vb29vbwAUAAsBAArGHUjaivAQUn0KXKzYqap43Nt9oabuWZCr2G0FYiq13B6s65AbjoblRA3jW3kJJZJ9xvAuxizemDG1u/Ry6SVu8lpvUbgoR8wk+e1PaVJzWkSdgtoy3m8zP1gZVBmuqJARDeJp1Jq8AwRdmEY0pDZX3maiX2zW9qFJ5uFa77iYuXrlTr7Z9jmD8bOo29gjmszNVObgLDi7tXrBlcfWOXZ/gNbSfTidzQV0CaCicR7ENGQhlcIEYqOGVFc6nRnkxTsqshUDWQeEbYbWihSRfS7LK4sUPL1VDt/jNukmBlyedi1T9VbiFsqOvpS31eFQYruKRXyymHRQC0jwIKN700E="
+        }
+      ]
+    }
+  ]
+}

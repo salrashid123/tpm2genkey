@@ -15,6 +15,24 @@ const ()
 
 var ()
 
+type PolicyJson struct {
+	Policy []*TPMPolicyJson `json:"policy"`
+}
+
+type TPMPolicyJson struct {
+	CommandCode   int    `json:"commandcode"`
+	CommandPolicy []byte `json:"commandpolicy"`
+}
+
+type AuthPolicyJson struct {
+	AuthPolicy []*TPMAuthPolicyJson `json:"authpolicy"`
+}
+
+type TPMAuthPolicyJson struct {
+	Name   string           `json:"name"`
+	Policy []*TPMPolicyJson `json:"policy"`
+}
+
 type NewKeyConfig struct {
 	Debug              bool               // debug logging
 	TPMDevice          io.ReadWriteCloser // initialized transport for the TPM

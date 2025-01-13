@@ -4,14 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"flag"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"slices"
-	"strconv"
-	"strings"
 
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	"github.com/google/go-tpm-tools/simulator"
@@ -95,23 +92,6 @@ func main() {
 	sess := keyfile.NewTPMSession(rwr)
 
 	//log.Printf("Parent is TPM_HT_PERMANENT: %t", keyfile.IsMSO(tpm2.TPMHandle(key.Parent), keyfile.TPM_HT_PERMANENT))
-
-	var uintpcrs []uint
-
-	if len(*pcrs) > 0 {
-		uintpcrs = make([]uint, len(strings.Split(*pcrs, ",")))
-		for idx, i := range strings.Split(*pcrs, ",") {
-			if i != "" {
-				j, err := strconv.Atoi(i)
-				if err != nil {
-					fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
-					os.Exit(1)
-				}
-				uintpcrs[idx] = uint(j)
-			}
-		}
-	}
-
 	primary, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.AuthHandle{
 			Handle: key.Parent,

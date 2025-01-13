@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"slices"
 
+	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpmutil"
@@ -33,7 +35,8 @@ var (
 
 	pcrs               = flag.String("pcrs", "", "pcr banks to bind the key to")
 	enablePolicySyntax = flag.Bool("enablePolicySyntax", false, "Enable policy syntax encoding")
-	commandCodePolicy  = flag.String("commandCodePolicy", "", "comma separated commandCode:hexPolicy (code1:hexPolicy1,code2:hexPolicy2)")
+	policyFile         = flag.String("policy", "", "policy to encode")
+	authPolicyFile     = flag.String("authPolicy", "", "authPolicy to encode")
 
 	// rsa
 	exponent   = flag.Int("exponent", 65537, "RSA exponent")
@@ -90,13 +93,71 @@ func main() {
 			os.Exit(1)
 		}
 
+		var policy []*keyfile.TPMPolicy
+		var authPolicy []*keyfile.TPMAuthPolicy
+
+		if *policyFile != "" {
+			polBytes, err := os.ReadFile(*policyFile)
+			if err != nil {
+				fmt.Printf("tpm2genkey: error reading private %v\n", err)
+				os.Exit(1)
+			}
+
+			var jpolicy tpm2genkey.PolicyJson
+			err = json.Unmarshal(polBytes, &jpolicy)
+			if err != nil {
+				fmt.Printf("tpm2genkey: error unmarshalling Policy %v\n", err)
+				os.Exit(1)
+			}
+
+			for _, p := range jpolicy.Policy {
+				policy = append(policy, &keyfile.TPMPolicy{
+					CommandCode:   p.CommandCode,
+					CommandPolicy: p.CommandPolicy,
+				})
+			}
+		}
+
+		if *authPolicyFile != "" {
+			authPolBytes, err := os.ReadFile(*authPolicyFile)
+			if err != nil {
+				fmt.Printf("tpm2genkey: error reading private %v\n", err)
+				os.Exit(1)
+			}
+
+			var jauthpolicy tpm2genkey.AuthPolicyJson
+			err = json.Unmarshal(authPolBytes, &jauthpolicy)
+			if err != nil {
+				fmt.Printf("tpm2genkey: error unmarshalling authPolicy %v\n", err)
+				os.Exit(1)
+			}
+
+			for _, p := range jauthpolicy.AuthPolicy {
+				n := p.Name
+				var policy []*keyfile.TPMPolicy
+				for _, r := range p.Policy {
+					policy = append(policy, &keyfile.TPMPolicy{
+						CommandCode:   r.CommandCode,
+						CommandPolicy: r.CommandPolicy,
+					})
+
+				}
+
+				authPolicy = append(authPolicy, &keyfile.TPMAuthPolicy{
+					Name:   n,
+					Policy: policy,
+				})
+			}
+		}
+
 		p, err := tpm2genkey.ToPEM(&tpm2genkey.ToPEMConfig{
-			Public:          pu,
-			Private:         pr,
-			Parent:          uint32(*parent),
-			Password:        []byte(*password),
-			Description:     *description,
-			CommandCodeHash: *commandCodePolicy,
+			Public:      pu,
+			Private:     pr,
+			Parent:      uint32(*parent),
+			Password:    []byte(*password),
+			Description: *description,
+			Policy:      policy,
+			AuthPolicy:  authPolicy,
 		})
 		if err != nil {
 			fmt.Printf("tpm2genkey: error converting = %v\n", err)
