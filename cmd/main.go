@@ -50,14 +50,16 @@ var (
 	aeskeysize = flag.Int("aeskeysize", 128, "AES keysize")
 
 	// common
-	tpmPath     = flag.String("tpm-path", "/dev/tpmrm0", "Create: Path to the TPM device (character device or a Unix socket).")
-	password    = flag.String("password", "", "Password for the created key")
-	ownerpw     = flag.String("ownerpw", "", "Owner Password for the created key")
-	parentpw    = flag.String("parentpw", "", "Parent Password for the created key")
-	parent      = flag.Uint("parent", uint(tpm2.TPMRHOwner.HandleValue()), "parent Handle (default  tpm2.TPMRHOwner: 0x40000001 // 1073741825)")
-	description = flag.String("description", "", "description for the PEM key File (optional)")
-	in          = flag.String("in", "", "PEM Input File to convert")
-	out         = flag.String("out", "", "PEM output File")
+	tpmPath           = flag.String("tpm-path", "/dev/tpmrm0", "Create: Path to the TPM device (character device or a Unix socket).")
+	password          = flag.String("password", "", "Password for the created key")
+	ownerpw           = flag.String("ownerpw", "", "Owner Password for the created key")
+	parentpw          = flag.String("parentpw", "", "Parent Password for the created key")
+	parent            = flag.Uint("parent", uint(tpm2.TPMRHOwner.HandleValue()), "parent Handle (default  tpm2.TPMRHOwner: 0x40000001 // 1073741825)")
+	description       = flag.String("description", "", "description for the PEM key File (optional)")
+	in                = flag.String("in", "", "PEM Input File to convert")
+	out               = flag.String("out", "", "PEM output File")
+	version           = flag.Bool("version", false, "print version")
+	Commit, Tag, Date string
 )
 
 var TPMDEVICES = []string{"/dev/tpm0", "/dev/tpmrm0"}
@@ -78,6 +80,14 @@ func main() {
 	if *help {
 		flag.PrintDefaults()
 		return
+	}
+
+	if *version {
+		// go build  -ldflags="-s -w -X main.Tag=$(git describe --tags --abbrev=0) -X main.Commit=$(git rev-parse HEAD)" cmd/main.go
+		fmt.Printf("Version: %s\n", Tag)
+		fmt.Printf("Date: %s\n", Date)
+		fmt.Printf("Commit: %s\n", Commit)
+		os.Exit(0)
 	}
 
 	if *mode == "tpm2pem" {
