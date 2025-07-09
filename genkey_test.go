@@ -301,6 +301,30 @@ func TestGenKeyNoAuth(t *testing.T) {
 	require.True(t, regenKey.EmptyAuth)
 }
 
+func TestGenKeyPersitent(t *testing.T) {
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	persistentHandle := 0x81008002
+	_, err = NewKey(&NewKeyConfig{
+		TPMDevice:        tpmDevice,
+		Alg:              "rsa",
+		Parent:           tpm2.TPMRHOwner.HandleValue(),
+		Exponent:         65537,
+		RSAKeySize:       1024,
+		PersistentHandle: persistentHandle,
+	})
+	require.NoError(t, err)
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	_, err = tpm2.ReadPublic{
+		ObjectHandle: tpm2.TPMHandle(tpm2.TPMHandle(persistentHandle)),
+	}.Execute(rwr)
+	require.NoError(t, err)
+}
+
 func TestGenKeyPCR(t *testing.T) {
 	tpmDevice, err := simulator.Get()
 	require.NoError(t, err)

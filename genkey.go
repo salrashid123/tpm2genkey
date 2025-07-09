@@ -48,6 +48,7 @@ type NewKeyConfig struct {
 	AESKeySize         int    // for aes, 128
 	PCRs               []uint // PCR banks to bind to
 	Description        string
+	PersistentHandle   int  // persistentHandle to save the key in
 	EnablePolicySyntax bool // enable policy syntax https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#section-4.1
 }
 
@@ -342,6 +343,39 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tpm2-genkey: can't create key: %v", err)
 		}
+
+		if h.PersistentHandle != 0 {
+			loadresponse, err := tpm2.Load{
+				ParentHandle: tpm2.AuthHandle{
+					Handle: primary.ObjectHandle,
+					Name:   primary.Name,
+					Auth:   tpm2.PasswordAuth(h.Parentpw),
+				},
+				InPrivate: keyresponse.OutPrivate,
+				InPublic:  keyresponse.OutPublic,
+			}.Execute(rwr)
+			if err != nil {
+				return nil, fmt.Errorf("tpm2-genkey: can't load key to persist : %v", err)
+			}
+
+			defer func() {
+				flushContextCmd := tpm2.FlushContext{
+					FlushHandle: loadresponse.ObjectHandle,
+				}
+				_, err = flushContextCmd.Execute(rwr)
+			}()
+			_, err = tpm2.EvictControl{
+				Auth: tpm2.TPMRHOwner,
+				ObjectHandle: &tpm2.NamedHandle{
+					Handle: loadresponse.ObjectHandle,
+					Name:   loadresponse.Name,
+				},
+				PersistentHandle: tpm2.TPMIDHPersistent(h.PersistentHandle),
+			}.Execute(rwr)
+			if err != nil {
+				return nil, fmt.Errorf("tpm2-genkey: can't persist key: %v", err)
+			}
+		}
 	} else if keyfile.IsMSO(tpm2.TPMHandle(h.Parent), keyfile.TPM_HT_PERSISTENT) {
 
 		p, err := tpm2.ReadPublic{
@@ -369,8 +403,41 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tpm2-genkey: can't create key: %v", err)
 		}
+
+		if h.PersistentHandle != 0 {
+			loadresponse, err := tpm2.Load{
+				ParentHandle: tpm2.AuthHandle{
+					Handle: tpm2.TPMHandle(h.Parent),
+					Name:   p.Name,
+					Auth:   tpm2.PasswordAuth(h.Parentpw),
+				},
+				InPrivate: keyresponse.OutPrivate,
+				InPublic:  keyresponse.OutPublic,
+			}.Execute(rwr)
+			if err != nil {
+				return nil, fmt.Errorf("tpm2-genkey: can't load key to persist : %v", err)
+			}
+
+			defer func() {
+				flushContextCmd := tpm2.FlushContext{
+					FlushHandle: loadresponse.ObjectHandle,
+				}
+				_, err = flushContextCmd.Execute(rwr)
+			}()
+			_, err = tpm2.EvictControl{
+				Auth: tpm2.TPMRHOwner,
+				ObjectHandle: &tpm2.NamedHandle{
+					Handle: loadresponse.ObjectHandle,
+					Name:   loadresponse.Name,
+				},
+				PersistentHandle: tpm2.TPMIDHPersistent(h.PersistentHandle),
+			}.Execute(rwr)
+			if err != nil {
+				return nil, fmt.Errorf("tpm2-genkey: can't persist key: %v", err)
+			}
+		}
 	} else {
-		return nil, fmt.Errorf("tpm2-genkey: unsupported parent handle %d\n", h.Parent)
+		return nil, fmt.Errorf("tpm2-genkey: unsupported parent handle %d", h.Parent)
 	}
 
 	// var authpol []*keyfile.TPMAuthPolicy

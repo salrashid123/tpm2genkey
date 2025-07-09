@@ -58,6 +58,7 @@ var (
 	description       = flag.String("description", "", "description for the PEM key File (optional)")
 	in                = flag.String("in", "", "PEM Input File to convert")
 	out               = flag.String("out", "", "PEM output File")
+	persistentHandle  = flag.Int("persistentHandle", 0, "PersistentHandle to set the key to")
 	version           = flag.Bool("version", false, "print version")
 	Commit, Tag, Date string
 )
@@ -254,6 +255,7 @@ func main() {
 			PCRs:               uintpcrs,
 			AESKeySize:         *aeskeysize,
 			Description:        *description,
+			PersistentHandle:   *persistentHandle,
 			EnablePolicySyntax: *enablePolicySyntax,
 		})
 		if err != nil {

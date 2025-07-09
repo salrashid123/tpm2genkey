@@ -17,6 +17,7 @@ The PEM output files are compliant with basic
 | **`-tpm-path`** | Path to the TPM device (default: `/dev/tpmrm0`) |
 | **`-mode`** | Operation mode: [`create tpm2pem pem2tpm`] (default: ``) |
 | **`-out`** | new key output PEM file (default: `private.pem`) |
+| **`-persistentHandle`** | Save the key to a persistentHandle (default: `none``) |
 | **`-alg`** | new key algorithm: [`rsa ecdsa aes hmac`] (default: `rsa`) |
 | **`-exponent`** | RSA exponent (default: `65537`) |
 | **`-rsakeysize`** | RSA keysize: rsa (default: `2048`) |
@@ -59,14 +60,6 @@ To create new TPM-based `RSA|ECC|AES|HMAC` key which uses the default `OWNER` an
 ```bash
   ### create an rsa key
   tpm2genkey  --mode=create --alg=rsa --out=private.pem
-
-  ### if you have openssl3 tpm2 installed https://github.com/tpm2-software/tpm2-openssl
-  # you can print the key details for the swtpm
-  # export OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules/
-  # export TPM2OPENSSL_TCTI="swtpm:port=2321"
-
-  # openssl asn1parse -inform PEM -in private.pem
-  # openssl rsa -provider tpm2  -provider default -in private.pem --text
 ```
 
 * `RSA` with userAuth
@@ -112,6 +105,16 @@ HMAC key generation on TPM:
 ```bash
   # generate the key
   tpm2genkey --mode=create --alg=hmac  --out=private.pem 
+```
+
+
+Note, if you have [openssl3 tpm2 installed](https://github.com/tpm2-software/tpm2-openssl), you can print the key details for the swtpm
+```bash
+export OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules/
+export TPM2OPENSSL_TCTI=/dev/tpmrm0  # or for swtpm: "swtpm:port=2321"   
+
+openssl asn1parse -inform PEM -in private.pem
+openssl rsa -provider tpm2  -provider default -in private.pem --text
 ```
 
 ### New Key with PersistentHandle (TPMHTPersistent)
