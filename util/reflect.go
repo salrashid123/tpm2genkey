@@ -27,44 +27,43 @@ const (
 	maxListLength uint32 = 4096
 )
 
-// func isMarshalledByReflection(v reflect.Value) bool {
-// 	var mbr marshallableByReflection
-// 	if v.Type().AssignableTo(reflect.TypeOf(&mbr).Elem()) {
-// 		return true
-// 	}
-// 	// basic types are also marshalled by reflection, as are empty structs
-// 	switch v.Kind() {
-// 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Array, reflect.Slice, reflect.Ptr:
-// 		return true
-// 	case reflect.Struct:
-// 		//if v.NumField() == 0 {
-// 		//	return true
-// 		//}
-// 		return true
-// 	}
-// 	return false
-// }
+func isMarshalledByReflection(v reflect.Value) bool {
+	var mbr marshallableByReflection
+	if v.Type().AssignableTo(reflect.TypeOf(&mbr).Elem()) {
+		return true
+	}
+	// basic types are also marshalled by reflection, as are empty structs
+	switch v.Kind() {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Array, reflect.Slice, reflect.Ptr:
+		return true
+	case reflect.Struct:
+		if v.NumField() == 0 {
+			return true
+		}
+	}
+	return false
+}
 
 // marshal will serialize the given value, appending onto the given buffer.
 // Returns an error if the value is not marshallable.
 func marshal(buf *bytes.Buffer, v reflect.Value) error {
 	// If the type is not marshalled by reflection, try to call the custom marshal method.
-	// if !isMarshalledByReflection(v) {
-	// 	u, ok := v.Interface().(Marshallable)
-	// 	if ok {
-	// 		u.marshal(buf)
-	// 		return nil
-	// 	}
-	// 	if v.CanAddr() {
-	// 		// Maybe we got an addressable value whose pointer implements Marshallable
-	// 		pu, ok := v.Addr().Interface().(Marshallable)
-	// 		if ok {
-	// 			pu.marshal(buf)
-	// 			return nil
-	// 		}
-	// 	}
-	// 	return fmt.Errorf("can't marshal: type %v does not implement Marshallable or marshallableByReflection", v.Type().Name())
-	// }
+	if !isMarshalledByReflection(v) {
+		u, ok := v.Interface().(Marshallable)
+		if ok {
+			u.marshal(buf)
+			return nil
+		}
+		if v.CanAddr() {
+			// Maybe we got an addressable value whose pointer implements Marshallable
+			pu, ok := v.Addr().Interface().(Marshallable)
+			if ok {
+				pu.marshal(buf)
+				return nil
+			}
+		}
+		//return fmt.Errorf("can't marshal: type %v does not implement Marshallable or marshallableByReflection", v.Type().Name())
+	}
 
 	// Otherwise, use reflection.
 	switch v.Kind() {
@@ -302,12 +301,12 @@ func marshalBitwise(buf *bytes.Buffer, v reflect.Value) error {
 // type.
 func unmarshal(buf *bytes.Buffer, v reflect.Value) error {
 	// If the type is not marshalled by reflection, try to call the custom unmarshal method.
-	// if !isMarshalledByReflection(v) {
-	// 	if u, ok := v.Addr().Interface().(Unmarshallable); ok {
-	// 		return u.unmarshal(buf)
-	// 	}
-	// 	return fmt.Errorf("can't unmarshal: type %v does not implement Unmarshallable or marshallableByReflection", v.Type().Name())
-	// }
+	if !isMarshalledByReflection(v) {
+		if u, ok := v.Addr().Interface().(Unmarshallable); ok {
+			return u.unmarshal(buf)
+		}
+		//return fmt.Errorf("can't unmarshal: type %v does not implement Unmarshallable or marshallableByReflection", v.Type().Name())
+	}
 
 	switch v.Kind() {
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
