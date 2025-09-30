@@ -100,3 +100,19 @@ openssl asn1parse -inform PEM -in private.pem
   304:d=1  hl=3 l= 224 prim: OCTET STRING      [HEX DUMP]:00DE0020888AB7BA700A97826E83746E1501A11FA9890B556A5430BFA5C67BBD1DC3EB24001024C104EB6CBCABBF0EBCD0B8028D67B5988907C24DFDF01A49299F0817A484C8CE50136329E4C4A17C0AFC6E8B8E119199DEB3A5983ED2C4E99C9834F8AD3C487DA8646B167430BECB4D4A5375351239DC59304B52386191EFCEE67B98F4533AEC917DC688E5FD706611E33C744545CFB202C42DBA130E03F275740275ECB6E790C600D94CEE2432BCD1471284423DE7056133A4B37C550B5D5133486AB56F8A232B1FDDA2B6996DB6CD3E43872B513B4E96DB092B33C9CA0366
 
 ```
+
+### Testing
+
+Using [swtpm](https://github.com/stefanberger/swtpm)
+
+```bash
+rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
+swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
+swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear  --log level=2
+
+# then specify "127.0.0.1:2321"  as the TPM device path in the examples
+# and for tpm2_tools, export the following var
+export TPM2TOOLS_TCTI="swtpm:port=2321"
+
+go test -v
+```

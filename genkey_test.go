@@ -8,10 +8,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"io"
+	"net"
 	"testing"
 
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
-	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/stretchr/testify/require"
@@ -19,12 +19,13 @@ import (
 
 const (
 	maxInputBuffer = 1024
+	swTPMPath      = "127.0.0.1:2321"
 )
 
 var ()
 
 func TestGenKeyRSA(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -92,6 +93,12 @@ func TestGenKeyRSA(t *testing.T) {
 				InPrivate: regenKey.Privkey,
 			}.Execute(rwr)
 			require.NoError(t, err)
+			defer func() {
+				flushContextCmd := tpm2.FlushContext{
+					FlushHandle: rsaKeyResponse.ObjectHandle,
+				}
+				_, _ = flushContextCmd.Execute(rwr)
+			}()
 
 			data := []byte("stringtosign")
 
@@ -143,7 +150,7 @@ func TestGenKeyRSA(t *testing.T) {
 }
 
 func TestGenKeyECDSA(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -185,7 +192,7 @@ func TestGenKeyECDSA(t *testing.T) {
 }
 
 func TestGenKeyAuth(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -235,6 +242,13 @@ func TestGenKeyAuth(t *testing.T) {
 	}.Execute(rwr)
 	require.NoError(t, err)
 
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: rsaKeyResponse.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
+
 	data := []byte("stringtosign")
 
 	digest := sha256.Sum256(data)
@@ -283,7 +297,7 @@ func TestGenKeyAuth(t *testing.T) {
 }
 
 func TestGenKeyNoAuth(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -302,7 +316,7 @@ func TestGenKeyNoAuth(t *testing.T) {
 }
 
 func TestGenKeyPersitent(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -326,7 +340,7 @@ func TestGenKeyPersitent(t *testing.T) {
 }
 
 func TestGenKeyPCR(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -377,6 +391,12 @@ func TestGenKeyPCR(t *testing.T) {
 		InPrivate: regenKey.Privkey,
 	}.Execute(rwr)
 	require.NoError(t, err)
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: rsaKeyResponse.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
 
 	data := []byte("stringtosign")
 
@@ -476,7 +496,7 @@ func TestGenKeyPCR(t *testing.T) {
 }
 
 func TestGenKeyPCRPassword(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -530,7 +550,12 @@ func TestGenKeyPCRPassword(t *testing.T) {
 		InPrivate: regenKey.Privkey,
 	}.Execute(rwr)
 	require.NoError(t, err)
-
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: rsaKeyResponse.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
 	data := []byte("stringtosign")
 
 	digest := sha256.Sum256(data)
@@ -644,13 +669,13 @@ func TestGenKeyPCRPassword(t *testing.T) {
 }
 
 func TestGenKeyPCRFail(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
 	require.NoError(t, err)
 
-	pcrs := []uint{0, 23}
+	pcrs := []uint{23}
 
 	b, err := NewKey(&NewKeyConfig{
 		TPMDevice:  tpmDevice,
@@ -694,8 +719,41 @@ func TestGenKeyPCRFail(t *testing.T) {
 		InPrivate: regenKey.Privkey,
 	}.Execute(rwr)
 	require.NoError(t, err)
-
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: rsaKeyResponse.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
 	data := []byte("stringtosign")
+
+	pcrReadRsp, err := tpm2.PCRRead{
+		PCRSelectionIn: tpm2.TPMLPCRSelection{
+			PCRSelections: []tpm2.TPMSPCRSelection{
+				{
+					Hash:      tpm2.TPMAlgSHA256,
+					PCRSelect: tpm2.PCClientCompatible.PCRs(pcrs...),
+				},
+			},
+		},
+	}.Execute(rwr)
+	require.NoError(t, err)
+
+	_, err = tpm2.PCRExtend{
+		PCRHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMHandle(uint32(pcrs[0])),
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		Digests: tpm2.TPMLDigestValues{
+			Digests: []tpm2.TPMTHA{
+				{
+					HashAlg: tpm2.TPMAlgSHA256,
+					Digest:  pcrReadRsp.PCRValues.Digests[0].Buffer,
+				},
+			},
+		},
+	}.Execute(rwr)
+	require.NoError(t, err)
 
 	digest := sha256.Sum256(data)
 
@@ -717,34 +775,6 @@ func TestGenKeyPCRFail(t *testing.T) {
 		PolicySession: sess.Handle(),
 		Pcrs: tpm2.TPMLPCRSelection{
 			PCRSelections: sel.PCRSelections,
-		},
-	}.Execute(rwr)
-	require.NoError(t, err)
-
-	pcrReadRsp, err := tpm2.PCRRead{
-		PCRSelectionIn: tpm2.TPMLPCRSelection{
-			PCRSelections: []tpm2.TPMSPCRSelection{
-				{
-					Hash:      tpm2.TPMAlgSHA256,
-					PCRSelect: tpm2.PCClientCompatible.PCRs(pcrs...),
-				},
-			},
-		},
-	}.Execute(rwr)
-	require.NoError(t, err)
-
-	_, err = tpm2.PCRExtend{
-		PCRHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMHandle(uint32(23)),
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		Digests: tpm2.TPMLDigestValues{
-			Digests: []tpm2.TPMTHA{
-				{
-					HashAlg: tpm2.TPMAlgSHA256,
-					Digest:  pcrReadRsp.PCRValues.Digests[0].Buffer,
-				},
-			},
 		},
 	}.Execute(rwr)
 	require.NoError(t, err)
@@ -776,7 +806,7 @@ func TestGenKeyPCRFail(t *testing.T) {
 }
 
 func TestGenKeyParent(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -822,7 +852,7 @@ func TestGenKeyParent(t *testing.T) {
 }
 
 func TestGenKeyParentAuth(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -872,7 +902,7 @@ func TestGenKeyParentAuth(t *testing.T) {
 }
 
 func TestGenKeyOwnerAuth(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -901,7 +931,7 @@ func TestGenKeyOwnerAuth(t *testing.T) {
 }
 
 func TestGenKeyOwnerParentAuthPersistent(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -970,7 +1000,7 @@ func TestGenKeyOwnerParentAuthPersistent(t *testing.T) {
 }
 
 func TestGenKeyOwnerParentAuthPermanent(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -1040,7 +1070,7 @@ func TestGenKeyAES(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 
-			tpmDevice, err := simulator.Get()
+			tpmDevice, err := net.Dial("tcp", swTPMPath)
 			require.NoError(t, err)
 			defer tpmDevice.Close()
 
@@ -1083,7 +1113,12 @@ func TestGenKeyAES(t *testing.T) {
 				InPrivate: regenKey.Privkey,
 			}.Execute(rwr)
 			require.NoError(t, err)
-
+			defer func() {
+				flushContextCmd := tpm2.FlushContext{
+					FlushHandle: aesKeyResponse.ObjectHandle,
+				}
+				_, _ = flushContextCmd.Execute(rwr)
+			}()
 			iv := make([]byte, aes.BlockSize)
 			_, err = io.ReadFull(rand.Reader, iv)
 			require.NoError(t, err)
@@ -1162,7 +1197,7 @@ func encryptDecryptSymmetric(rwr transport.TPM, keyAuth tpm2.AuthHandle, iv, dat
 }
 
 func TestGenKeyHMAC(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -1202,7 +1237,12 @@ func TestGenKeyHMAC(t *testing.T) {
 		InPrivate: regenKey.Privkey,
 	}.Execute(rwr)
 	require.NoError(t, err)
-
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: hmacKey.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
 	data := []byte("string to mac")
 
 	objAuth := &tpm2.TPM2BAuth{}
