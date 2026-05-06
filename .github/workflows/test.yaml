@@ -29,5 +29,5 @@ jobs:
           go-version-file: 'go.mod'
 
       - name: Run tests
-        run: go test -v -count=1  -run '^(TestToPEMNoAuth|TestToPEMAuth|TestFromPEM|TestGenKeyRSA|TestGenKeyECDSA|TestGenKeyAuth|TestGenKeyNoAuth|TestGenKeyPCR|TestGenKeyAES|TestGenKeyHMAC)'
+        run: go test -v -count=1  -skip '^(TestGenKeyParentAuth|TestGenKeyOwnerAuth|TestGenKeyOwnerParentAuthPersistent|TestGenKeyOwnerParentAuthPermanent)'
 

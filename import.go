@@ -2,6 +2,12 @@ package tpm2genkey
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 
@@ -15,44 +21,28 @@ const ()
 
 var ()
 
-type PolicyJson struct {
-	Policy []*TPMPolicyJson `json:"policy"`
-}
-
-type TPMPolicyJson struct {
-	CommandCode   int    `json:"commandcode"`
-	CommandPolicy []byte `json:"commandpolicy"`
-}
-
-type AuthPolicyJson struct {
-	AuthPolicy []*TPMAuthPolicyJson `json:"authpolicy"`
-}
-
-type TPMAuthPolicyJson struct {
-	Name   string           `json:"name"`
-	Policy []*TPMPolicyJson `json:"policy"`
-}
-
-type NewKeyConfig struct {
+type NewImportConfig struct {
 	Debug              bool               // debug logging
 	TPMDevice          io.ReadWriteCloser // initialized transport for the TPM
 	Alg                string             // aes, rsa, ecdsa or hmac
 	Exponent           int                // for rsa 65537
-	Ownerpw            []byte
-	Parentpw           []byte
-	Parent             uint32 // Parent handle
-	Password           []byte // auth password
-	RSAKeySize         int    // for rsa 2048
-	Curve              string // for ecdsa [secp224r1|prime256v1|secp384r1|secp521r1"
-	Mode               string // for aes  [cfb|crt|ofb|cbc|ecb]
-	AESKeySize         int    // for aes, 128
-	PCRs               []uint // PCR banks to bind to
+	RawKey             []byte             // the raw key to import (PEM format for RSA|ECC; rawbytes for AES|HMAC)
+	Ownerpw            []byte             // root hierarchy password
+	Parentpw           []byte             // password for parent key
+	Parent             uint32             // Parent handle
+	Password           []byte             // key auth password
+	RSAScheme          tpm2.TPMTRSAScheme
+	ECCCurve           tpm2.TPMECCCurve // for ecdsa [secp224r1|prime256v1|secp384r1|secp521r1"
+	HashAlg            tpm2.TPMIAlgHash
+	AESAlg             tpm2.TPMAlgID // for aes  [cfb|crt|ofb|cbc|ecb]
+	AESKeySize         int           // for aes, 128
+	PCRs               []uint        // PCR banks to bind to
 	Description        string
 	PersistentHandle   int  // persistentHandle to save the key in
 	EnablePolicySyntax bool // enable policy syntax https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#section-4.1
 }
 
-func NewKey(h *NewKeyConfig) ([]byte, error) {
+func NewImportKey(h *NewImportConfig) ([]byte, error) {
 
 	// todo: validate input
 
@@ -71,9 +61,18 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 		}
 	}()
 
+	if h.Parent == 0 {
+		h.Parent = tpm2.TPMRHOwner.HandleValue()
+	}
+
+	if h.HashAlg == 0 {
+		h.HashAlg = tpm2.TPMAlgSHA256
+	}
+
 	var commandParameterPCR []byte
 	var commandParameterAuth []byte
 	if len(h.PCRs) > 0 {
+
 		sel := tpm2.TPMLPCRSelection{
 			PCRSelections: []tpm2.TPMSPCRSelection{
 				{
@@ -97,7 +96,6 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 				Buffer: expectedDigest,
 			},
 		}
-
 		_, err = pol.Execute(rwr)
 		if err != nil {
 			return nil, fmt.Errorf("error executing PolicyPCR: %v", err)
@@ -136,65 +134,88 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 		return nil, fmt.Errorf("error executing PolicyGetDigest: %v", err)
 	}
 
+	var sens2B []byte
+
 	switch h.Alg {
 	case "rsa":
+
+		block, _ := pem.Decode(h.RawKey)
+		if block == nil {
+			return nil, fmt.Errorf("tpm2-genkey:      Failed to decode PEM block containing the key %v", err)
+		}
+		pvp, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("tpm2-genkey:      Failed to parse PEM block containing the key %v", err)
+		}
+
+		pv, ok := pvp.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("tpm2-genkey:      Failed to covert PEM key to RSA private key %v", err)
+		}
+
 		keyTemplate = tpm2.TPMTPublic{
 			Type:    tpm2.TPMAlgRSA,
 			NameAlg: tpm2.TPMAlgSHA256,
 			ObjectAttributes: tpm2.TPMAObject{
-				SignEncrypt:         true,
-				FixedTPM:            true,
-				FixedParent:         true,
-				SensitiveDataOrigin: true,
+				FixedTPM:            false,
+				FixedParent:         false,
+				SensitiveDataOrigin: false,
 				UserWithAuth:        true,
+				SignEncrypt:         true,
 			},
-			AuthPolicy: tpm2.TPM2BDigest{
-				Buffer: pgd.PolicyDigest.Buffer,
-			},
+			AuthPolicy: pgd.PolicyDigest,
 			Parameters: tpm2.NewTPMUPublicParms(
 				tpm2.TPMAlgRSA,
 				&tpm2.TPMSRSAParms{
-					Scheme: tpm2.TPMTRSAScheme{
-						Scheme: tpm2.TPMAlgRSASSA,
-						Details: tpm2.NewTPMUAsymScheme(
-							tpm2.TPMAlgRSASSA,
-							&tpm2.TPMSSigSchemeRSASSA{
-								HashAlg: tpm2.TPMAlgSHA256,
-							},
-						),
-					},
-					KeyBits:  tpm2.TPMKeyBits(h.RSAKeySize),
-					Exponent: uint32(h.Exponent),
+					Exponent: uint32(pv.PublicKey.E),
+					Scheme:   h.RSAScheme,
+					KeyBits:  tpm2.TPMIRSAKeyBits(pv.N.BitLen()), // 2048,
+				},
+			),
+
+			Unique: tpm2.NewTPMUPublicID(
+				tpm2.TPMAlgRSA,
+				&tpm2.TPM2BPublicKeyRSA{
+					Buffer: pv.PublicKey.N.Bytes(),
 				},
 			),
 		}
+
+		sens2B = tpm2.Marshal(tpm2.TPMTSensitive{
+			AuthValue: tpm2.TPM2BAuth{
+				Buffer: h.Password,
+			},
+			SensitiveType: tpm2.TPMAlgRSA,
+			Sensitive: tpm2.NewTPMUSensitiveComposite(
+				tpm2.TPMAlgRSA,
+				&tpm2.TPM2BPrivateKeyRSA{Buffer: pv.Primes[0].Bytes()},
+			),
+		})
+
 	case "ecdsa":
 
-		var crv tpm2.TPMECCCurve
-		switch h.Curve {
-		// case "prime192v1":  // not an armored key
-		// 	crv = tpm2.TPMECCNistP192
-		case "secp224r1":
-			crv = tpm2.TPMECCNistP224
-		case "prime256v1":
-			crv = tpm2.TPMECCNistP256
-		case "secp384r1":
-			crv = tpm2.TPMECCNistP384
-		case "secp521r1":
-			crv = tpm2.TPMECCNistP521
-		default:
-			return nil, fmt.Errorf("tpm2-genkey: unsuported ecdsa curve: %s  must be one of [secp224r1|prime256v1|secp384r1|secp521r1]\n", h.Curve)
+		block, _ := pem.Decode(h.RawKey)
+		if block == nil {
+			return nil, fmt.Errorf("tpm2-genkey:      Failed to decode PEM block containing the key %v", err)
 		}
+		pvp, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("tpm2-genkey:      Failed to parse PEM block containing the key %v", err)
+		}
+
+		k := pvp.(*ecdsa.PrivateKey)
+
+		pk := k.PublicKey
 
 		keyTemplate = tpm2.TPMTPublic{
 			Type:    tpm2.TPMAlgECC,
 			NameAlg: tpm2.TPMAlgSHA256,
 			ObjectAttributes: tpm2.TPMAObject{
-				SignEncrypt:         true,
-				FixedTPM:            true,
-				FixedParent:         true,
-				SensitiveDataOrigin: true,
+				FixedTPM:            false,
+				FixedParent:         false,
+				SensitiveDataOrigin: false,
 				UserWithAuth:        true,
+				SignEncrypt:         true,
 			},
 			AuthPolicy: tpm2.TPM2BDigest{
 				Buffer: pgd.PolicyDigest.Buffer,
@@ -202,47 +223,58 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 			Parameters: tpm2.NewTPMUPublicParms(
 				tpm2.TPMAlgECC,
 				&tpm2.TPMSECCParms{
-					CurveID: crv,
+					CurveID: h.ECCCurve,
 					Scheme: tpm2.TPMTECCScheme{
 						Scheme: tpm2.TPMAlgECDSA,
 						Details: tpm2.NewTPMUAsymScheme(
 							tpm2.TPMAlgECDSA,
 							&tpm2.TPMSSigSchemeECDSA{
-								HashAlg: tpm2.TPMAlgSHA256,
+								HashAlg: h.HashAlg,
 							},
 						),
 					},
 				},
 			),
+			Unique: tpm2.NewTPMUPublicID(
+				tpm2.TPMAlgECC,
+				&tpm2.TPMSECCPoint{
+					X: tpm2.TPM2BECCParameter{
+						Buffer: pk.X.FillBytes(make([]byte, len(pk.X.Bytes()))), //pk.X.Bytes(), // pk.X.FillBytes(make([]byte, len(pk.X.Bytes()))),
+					},
+					Y: tpm2.TPM2BECCParameter{
+						Buffer: pk.Y.FillBytes(make([]byte, len(pk.Y.Bytes()))), //pk.Y.Bytes(), // pk.Y.FillBytes(make([]byte, len(pk.Y.Bytes()))),
+					},
+				},
+			),
 		}
+
+		sens2B = tpm2.Marshal(tpm2.TPMTSensitive{
+			AuthValue: tpm2.TPM2BAuth{
+				Buffer: h.Password,
+			},
+			SensitiveType: tpm2.TPMAlgECC,
+			Sensitive: tpm2.NewTPMUSensitiveComposite(
+				tpm2.TPMAlgECC,
+				&tpm2.TPM2BECCParameter{Buffer: k.D.FillBytes(make([]byte, len(k.D.Bytes())))},
+			),
+		})
+
 	case "aes":
 
-		var mode tpm2.TPMAlgID
-		switch h.Mode {
-		// case "prime192v1":  // not an armored key
-		// 	crv = tpm2.TPMECCNistP192
-		case "cfb":
-			mode = tpm2.TPMAlgCFB
-		case "crt":
-			mode = tpm2.TPMAlgCTR
-		case "ofb":
-			mode = tpm2.TPMAlgOFB
-		case "cbc":
-			mode = tpm2.TPMAlgCBC
-		case "ecb":
-			mode = tpm2.TPMAlgECB
-		default:
-			return nil, fmt.Errorf("tpm2-genkey: unsuported ecdsa curve: %s  must be one of [cfb|crt|ofb|cbc|ecb]\n", h.Mode)
-		}
+		sv := make([]byte, 32)
+		io.ReadFull(rand.Reader, sv)
+		privHash := crypto.SHA256.New()
+		privHash.Write(sv)
+		privHash.Write(h.RawKey)
 
 		keyTemplate = tpm2.TPMTPublic{
 			Type:    tpm2.TPMAlgSymCipher,
 			NameAlg: tpm2.TPMAlgSHA256,
 			ObjectAttributes: tpm2.TPMAObject{
-				FixedTPM:            true,
-				FixedParent:         true,
+				FixedTPM:            false,
+				FixedParent:         false,
+				SensitiveDataOrigin: false,
 				UserWithAuth:        true,
-				SensitiveDataOrigin: true,
 				Decrypt:             true,
 				SignEncrypt:         true,
 			},
@@ -254,7 +286,7 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 				&tpm2.TPMSSymCipherParms{
 					Sym: tpm2.TPMTSymDefObject{
 						Algorithm: tpm2.TPMAlgAES,
-						Mode:      tpm2.NewTPMUSymMode(tpm2.TPMAlgAES, mode),
+						Mode:      tpm2.NewTPMUSymMode(tpm2.TPMAlgAES, h.AESAlg),
 						KeyBits: tpm2.NewTPMUSymKeyBits(
 							tpm2.TPMAlgAES,
 							tpm2.TPMKeyBits(h.AESKeySize),
@@ -262,17 +294,49 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 					},
 				},
 			),
+			Unique: tpm2.NewTPMUPublicID(
+				tpm2.TPMAlgSymCipher,
+				&tpm2.TPM2BDigest{
+					Buffer: privHash.Sum(nil),
+				},
+			),
 		}
 
+		sens := tpm2.TPMTSensitive{
+			AuthValue: tpm2.TPM2BAuth{
+				Buffer: h.Password,
+			},
+			SensitiveType: tpm2.TPMAlgSymCipher,
+			SeedValue: tpm2.TPM2BDigest{
+				Buffer: sv,
+			},
+			Sensitive: tpm2.NewTPMUSensitiveComposite(
+				tpm2.TPMAlgSymCipher,
+				&tpm2.TPM2BSymKey{Buffer: h.RawKey},
+			),
+		}
+
+		if len(h.Password) > 0 {
+			sens.AuthValue = tpm2.TPM2BAuth{
+				Buffer: []byte(h.Password), // set any userAuth
+			}
+		}
+		sens2B = tpm2.Marshal(sens)
+
 	case "hmac":
+		sv := make([]byte, 32)
+		io.ReadFull(rand.Reader, sv)
+		privHash := crypto.SHA256.New()
+		privHash.Write(sv)
+		privHash.Write(h.RawKey)
 
 		keyTemplate = tpm2.TPMTPublic{
 			Type:    tpm2.TPMAlgKeyedHash,
 			NameAlg: tpm2.TPMAlgSHA256,
 			ObjectAttributes: tpm2.TPMAObject{
-				FixedTPM:            true,
-				FixedParent:         true,
-				SensitiveDataOrigin: true,
+				FixedTPM:            false,
+				FixedParent:         false,
+				SensitiveDataOrigin: false,
 				UserWithAuth:        true,
 				SignEncrypt:         true,
 			},
@@ -285,11 +349,31 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 						Scheme: tpm2.TPMAlgHMAC,
 						Details: tpm2.NewTPMUSchemeKeyedHash(tpm2.TPMAlgHMAC,
 							&tpm2.TPMSSchemeHMAC{
-								HashAlg: tpm2.TPMAlgSHA256,
+								HashAlg: h.HashAlg,
 							}),
 					},
 				}),
+			Unique: tpm2.NewTPMUPublicID(
+				tpm2.TPMAlgKeyedHash,
+				&tpm2.TPM2BDigest{
+					Buffer: privHash.Sum(nil),
+				},
+			),
 		}
+
+		sens2B = tpm2.Marshal(tpm2.TPMTSensitive{
+			SensitiveType: tpm2.TPMAlgKeyedHash,
+			AuthValue: tpm2.TPM2BAuth{
+				Buffer: h.Password,
+			},
+			SeedValue: tpm2.TPM2BDigest{
+				Buffer: sv,
+			},
+			Sensitive: tpm2.NewTPMUSensitiveComposite(
+				tpm2.TPMAlgKeyedHash,
+				&tpm2.TPM2BSensitiveData{Buffer: h.RawKey},
+			),
+		})
 
 	default:
 		return nil, fmt.Errorf("tpm2-genkey: unknown key algorithm")
@@ -299,7 +383,7 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 	//     use the default h2 tenplate as the primary key teplate and then a key under that primary key
 	// if the parent is a persistent handle, create a key using that as the parent.
 
-	var keyresponse *tpm2.CreateResponse
+	var keyresponse *tpm2.ImportResponse
 	if keyfile.IsMSO(tpm2.TPMHandle(h.Parent), keyfile.TPM_HT_PERMANENT) {
 		primary, err := tpm2.CreatePrimary{
 			PrimaryHandle: tpm2.AuthHandle{
@@ -326,23 +410,17 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 			_, _ = flushContextCmd.Execute(rwr)
 		}()
 
-		keyresponse, err = tpm2.Create{
+		keyresponse, err = tpm2.Import{
 			ParentHandle: tpm2.AuthHandle{
 				Handle: primary.ObjectHandle,
 				Name:   primary.Name,
 				Auth:   tpm2.PasswordAuth(h.Parentpw),
 			},
-			InPublic: tpm2.New2B(keyTemplate),
-			InSensitive: tpm2.TPM2BSensitiveCreate{
-				Sensitive: &tpm2.TPMSSensitiveCreate{
-					UserAuth: tpm2.TPM2BAuth{
-						Buffer: h.Password,
-					},
-				},
-			},
+			ObjectPublic: tpm2.New2B(keyTemplate),
+			Duplicate:    tpm2.TPM2BPrivate{Buffer: tpm2.Marshal(tpm2.TPM2BPrivate{Buffer: sens2B})},
 		}.Execute(rwr)
 		if err != nil {
-			return nil, fmt.Errorf("tpm2-genkey: can't create key: %v", err)
+			return nil, fmt.Errorf("tpm2-genkey: can't import key: %v", err)
 		}
 
 		if h.PersistentHandle != 0 {
@@ -353,7 +431,7 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 					Auth:   tpm2.PasswordAuth(h.Parentpw),
 				},
 				InPrivate: keyresponse.OutPrivate,
-				InPublic:  keyresponse.OutPublic,
+				InPublic:  tpm2.New2B(keyTemplate),
 			}.Execute(rwr)
 			if err != nil {
 				return nil, fmt.Errorf("tpm2-genkey: can't load key to persist : %v", err)
@@ -386,23 +464,17 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 			return nil, fmt.Errorf("tpm2-genkey: can't read public: %v", err)
 		}
 
-		keyresponse, err = tpm2.Create{
+		keyresponse, err = tpm2.Import{
 			ParentHandle: tpm2.AuthHandle{
 				Handle: tpm2.TPMHandle(h.Parent),
 				Name:   p.Name,
 				Auth:   tpm2.PasswordAuth(h.Parentpw),
 			},
-			InPublic: tpm2.New2B(keyTemplate),
-			InSensitive: tpm2.TPM2BSensitiveCreate{
-				Sensitive: &tpm2.TPMSSensitiveCreate{
-					UserAuth: tpm2.TPM2BAuth{
-						Buffer: h.Password,
-					},
-				},
-			},
+			ObjectPublic: tpm2.New2B(keyTemplate),
+			Duplicate:    tpm2.TPM2BPrivate{Buffer: tpm2.Marshal(tpm2.TPM2BPrivate{Buffer: sens2B})},
 		}.Execute(rwr)
 		if err != nil {
-			return nil, fmt.Errorf("tpm2-genkey: can't create key: %v", err)
+			return nil, fmt.Errorf("tpm2-genkey: can't import key: %v", err)
 		}
 
 		if h.PersistentHandle != 0 {
@@ -413,7 +485,7 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 					Auth:   tpm2.PasswordAuth(h.Parentpw),
 				},
 				InPrivate: keyresponse.OutPrivate,
-				InPublic:  keyresponse.OutPublic,
+				InPublic:  tpm2.New2B(keyTemplate),
 			}.Execute(rwr)
 			if err != nil {
 				return nil, fmt.Errorf("tpm2-genkey: can't load key to persist : %v", err)
@@ -473,7 +545,7 @@ func NewKey(h *NewKeyConfig) ([]byte, error) {
 
 	kf := keyfile.NewTPMKey(
 		keyfile.OIDLoadableKey,
-		keyresponse.OutPublic,
+		tpm2.New2B(keyTemplate),
 		keyresponse.OutPrivate,
 		keyfile.WithParent(tpm2.TPMHandle(h.Parent)),
 		keyfile.WithUserAuth(h.Password),

@@ -825,7 +825,7 @@ func TestGenKeyParent(t *testing.T) {
 		_, _ = flushContextCmd.Execute(rwr)
 	}()
 
-	persistentHandle := 0x81010003
+	persistentHandle := 0x81010005
 
 	_, err = tpm2.EvictControl{
 		Auth: tpm2.TPMRHOwner,
@@ -880,7 +880,7 @@ func TestGenKeyParentAuth(t *testing.T) {
 		_, _ = flushContextCmd.Execute(rwr)
 	}()
 
-	persistentHandle := 0x81010003
+	persistentHandle := 0x81010004
 	_, err = tpm2.EvictControl{
 		Auth: tpm2.TPMRHOwner,
 		ObjectHandle: &tpm2.NamedHandle{

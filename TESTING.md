@@ -114,5 +114,6 @@ swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctr
 # and for tpm2_tools, export the following var
 export TPM2TOOLS_TCTI="swtpm:port=2321"
 
-go test -v
+## skip the tests which alters the hierarchy password
+go test -v -count=1  -skip '^(TestGenKeyParentAuth|TestGenKeyOwnerAuth|TestGenKeyOwnerParentAuthPersistent|TestGenKeyOwnerParentAuthPermanent)'
 ```

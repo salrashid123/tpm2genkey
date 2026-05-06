@@ -1,12 +1,8 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
@@ -20,7 +16,6 @@ import (
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
-	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpmutil"
 	"github.com/salrashid123/tpm2genkey"
 )
@@ -30,7 +25,7 @@ const ()
 var (
 	help = flag.Bool("help", false, "print usage")
 
-	mode = flag.String("mode", "", "create | tpm2pem | pem2tpm | loadexternal")
+	mode = flag.String("mode", "", "create | tpm2pem | pem2tpm | import ")
 
 	// convert
 	public  = flag.String("public", "", "[TPM2B_PUBLIC] public key. Requires --private")
@@ -55,8 +50,9 @@ var (
 	aesmode    = flag.String("aesmode", "cfb", "AES mode [cfb|crt|ofb|cbc|ecb]")
 	aeskeysize = flag.Int("aeskeysize", 128, "AES keysize")
 
-	// loadexternal
-	parentKeyType = flag.String("parentKeyType", "rsa_ek", "rsa_ek|ecc_ek|h2 (default rsa_ek)")
+	// import
+	rsaScheme  = flag.String("rsaScheme", "rsassa", "rsassa|rsapss (default rsassa)")
+	hashScheme = flag.String("hashScheme", "sha256", "sha256|sha384|sha512 (default sha256)")
 
 	// common
 	tpmPath           = flag.String("tpm-path", "/dev/tpmrm0", "Create: Path to the TPM device (character device or a Unix socket).")
@@ -280,9 +276,24 @@ func run() int {
 			fmt.Printf("tpm2genkey: failed to write private key to file %v\n", err)
 			return 1
 		}
-	case "loadexternal":
-		if *in == "" || *public == "" {
-			fmt.Printf("tpm2genkey: error must specify --in --public  when loading external public key\n")
+	case "import":
+		if *in == "" {
+			fmt.Printf("tpm2genkey: error must specify --in  when loading external key\n")
+			return 1
+		}
+
+		if *out == "" {
+			fmt.Printf("tpm2genkey: error must specify --out= parameter when generating new key\n")
+			return 1
+		}
+		if *alg != "rsa" && *alg != "ecdsa" && *alg != "aes" && *alg != "hmac" {
+			fmt.Printf("tpm2genkey: error key algorithm must be either rsa, ecdsa, hmac or aes\n")
+			return 1
+		}
+
+		ppem, err := os.ReadFile(*in)
+		if err != nil {
+			fmt.Printf("tpm2genkey: error reading public %v\n", err)
 			return 1
 		}
 
@@ -295,168 +306,202 @@ func run() int {
 			rwc.Close()
 		}()
 
-		rwr := transport.FromReadWriter(rwc)
+		var uintpcrs []uint
 
-		ep, err := os.ReadFile(*in)
-		if err != nil {
-			fmt.Fprintf(os.Stdout, "tpm2genkey: error reading --in publicKey : %v", err)
-			return 1
+		if len(*pcrs) > 0 {
+			uintpcrs = make([]uint, len(strings.Split(*pcrs, ",")))
+			for idx, i := range strings.Split(*pcrs, ",") {
+				if i != "" {
+					j, err := strconv.Atoi(i)
+					if err != nil {
+						fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
+						return 1
+					}
+					uintpcrs[idx] = uint(j)
+				}
+			}
 		}
 
-		var ekPububFromPEMTemplate tpm2.TPMTPublic
-		block, _ := pem.Decode(ep)
-		parsedKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-		if err != nil {
-			fmt.Fprintf(os.Stdout, "tpm2genkey:  error parsing public key : %v", err)
-			return 1
-		}
-
-		switch pub := parsedKey.(type) {
-		case *rsa.PublicKey:
-			rsaPub, ok := parsedKey.(*rsa.PublicKey)
-			if !ok {
-				fmt.Fprintf(os.Stdout, "tpm2genkey:  error converting key to rsa")
-				return 1
-			}
-			// todo, support arbitrary templates someday
-			ekPububFromPEMTemplate = tpm2.RSAEKTemplate
-			ekPububFromPEMTemplate.Parameters = tpm2.NewTPMUPublicParms(
-				tpm2.TPMAlgRSA,
-				&tpm2.TPMSRSAParms{
-					Symmetric: tpm2.TPMTSymDefObject{
-						Algorithm: tpm2.TPMAlgAES,
-						KeyBits: tpm2.NewTPMUSymKeyBits(
-							tpm2.TPMAlgAES,
-							tpm2.TPMKeyBits(128),
-						),
-						Mode: tpm2.NewTPMUSymMode(
-							tpm2.TPMAlgAES,
-							tpm2.TPMAlgCFB,
-						),
-					},
-					KeyBits:  2048,
-					Exponent: uint32(*exponent),
-				},
-			)
-			ekPububFromPEMTemplate.Unique = tpm2.NewTPMUPublicID(
-				tpm2.TPMAlgRSA,
-				&tpm2.TPM2BPublicKeyRSA{
-					Buffer: rsaPub.N.Bytes(),
-				},
-			)
-
-			// ekPububFromPEMTemplate = tpm2.TPMTPublic{
-			// 	Type:    tpm2.TPMAlgRSA,
-			// 	NameAlg: tpm2.TPMAlgSHA256,
-			// 	ObjectAttributes: tpm2.TPMAObject{
-			// 		FixedTPM:             true,
-			// 		STClear:              false,
-			// 		FixedParent:          true,
-			// 		SensitiveDataOrigin:  true,
-			// 		UserWithAuth:         false,
-			// 		AdminWithPolicy:      true,
-			// 		NoDA:                 false,
-			// 		EncryptedDuplication: false,
-			// 		Restricted:           true,
-			// 		Decrypt:              true,
-			// 		SignEncrypt:          false,
-			// 	},
-			// 	AuthPolicy: tpm2.TPM2BDigest{
-			// 		Buffer: []byte{
-			// 			// TPM2_PolicySecret(RH_ENDORSEMENT)
-			// 			0x83, 0x71, 0x97, 0x67, 0x44, 0x84, 0xB3, 0xF8,
-			// 			0x1A, 0x90, 0xCC, 0x8D, 0x46, 0xA5, 0xD7, 0x24,
-			// 			0xFD, 0x52, 0xD7, 0x6E, 0x06, 0x52, 0x0B, 0x64,
-			// 			0xF2, 0xA1, 0xDA, 0x1B, 0x33, 0x14, 0x69, 0xAA,
-			// 		},
-			// 	},
-			// 	Parameters: tpm2.NewTPMUPublicParms(
-			// 		tpm2.TPMAlgRSA,
-			// 		&tpm2.TPMSRSAParms{
-			// 			Symmetric: tpm2.TPMTSymDefObject{
-			// 				Algorithm: tpm2.TPMAlgAES,
-			// 				KeyBits: tpm2.NewTPMUSymKeyBits(
-			// 					tpm2.TPMAlgAES,
-			// 					tpm2.TPMKeyBits(128),
-			// 				),
-			// 				Mode: tpm2.NewTPMUSymMode(
-			// 					tpm2.TPMAlgAES,
-			// 					tpm2.TPMAlgCFB,
-			// 				),
-			// 			},
-			// 			KeyBits:  2048,
-			// 			Exponent: uint32(*exponent),
-			// 		},
-			// 	),
-			// 	Unique: tpm2.NewTPMUPublicID(
-			// 		tpm2.TPMAlgRSA,
-			// 		&tpm2.TPM2BPublicKeyRSA{
-			// 			Buffer: rsaPub.N.Bytes(),
-			// 		},
-			// 	),
-			// }
-
-		case *ecdsa.PublicKey:
-			ecPub, ok := parsedKey.(*ecdsa.PublicKey)
-			if !ok {
-				fmt.Fprintf(os.Stdout, "tpm2genkey:  error converting key to ecdsa")
-				return 1
-			}
-
-			if *parentKeyType == "h2" {
-				ekPububFromPEMTemplate = keyfile.ECCSRK_H2_Template
-			} else {
-				ekPububFromPEMTemplate = tpm2.ECCEKTemplate
-			}
-			ekPububFromPEMTemplate.Unique = tpm2.NewTPMUPublicID(
-				tpm2.TPMAlgECC,
-				&tpm2.TPMSECCPoint{
-					X: tpm2.TPM2BECCParameter{
-						Buffer: ecPub.X.Bytes(),
-					},
-					Y: tpm2.TPM2BECCParameter{
-						Buffer: ecPub.Y.Bytes(),
-					},
-				},
-			)
+		var k []byte
+		var hsh tpm2.TPMAlgID
+		switch *hashScheme {
+		case "sha256":
+			hsh = tpm2.TPMAlgSHA256
+		case "sha384":
+			hsh = tpm2.TPMAlgSHA384
+		case "sha512":
+			hsh = tpm2.TPMAlgSHA512
 		default:
-			fmt.Fprintf(os.Stdout, "tpm2genkey: unsupported public key type %v", pub)
+			fmt.Fprintf(os.Stderr, " unknown hash selected %s", *hashScheme)
 			return 1
 		}
 
-		l, err := tpm2.LoadExternal{
-			InPublic:  tpm2.New2B(ekPububFromPEMTemplate),
-			Hierarchy: tpm2.TPMRHOwner,
-		}.Execute(rwr)
-		if err != nil {
-			fmt.Fprintf(os.Stdout, "tpm2genkey: error loading key %v", err)
-			return 1
-		}
-		defer func() {
-			flush := tpm2.FlushContext{
-				FlushHandle: l.ObjectHandle,
+		var sch tpm2.TPMTRSAScheme
+		switch *alg {
+		case "rsa":
+			switch *rsaScheme {
+			case "rsassa":
+				sch = tpm2.TPMTRSAScheme{
+					Scheme: tpm2.TPMAlgRSASSA,
+					Details: tpm2.NewTPMUAsymScheme(
+						tpm2.TPMAlgRSASSA,
+						&tpm2.TPMSSigSchemeRSASSA{
+							HashAlg: hsh,
+						},
+					),
+				}
+			case "rsapss":
+				sch = tpm2.TPMTRSAScheme{
+					Scheme: tpm2.TPMAlgRSAPSS,
+					Details: tpm2.NewTPMUAsymScheme(
+						tpm2.TPMAlgRSAPSS,
+						&tpm2.TPMSSigSchemeRSAPSS{
+							HashAlg: hsh,
+						},
+					),
+				}
+			default:
+				fmt.Fprintf(os.Stderr, " unknown rsa scheme selected %s", *rsaScheme)
+				return 1
 			}
-			_, err = flush.Execute(rwr)
-		}()
 
-		key_TPMTPublic_bytes := tpm2.Marshal(ekPububFromPEMTemplate)
-		key_TPM2BPublic := tpm2.BytesAs2B[tpm2.TPM2BPublic](key_TPMTPublic_bytes)
-		key_TPM2BPublic_bytes := tpm2.Marshal(key_TPM2BPublic)
+			k, err = tpm2genkey.NewImportKey(&tpm2genkey.NewImportConfig{
+				TPMDevice:          rwc,
+				Alg:                *alg,
+				RawKey:             ppem,
+				Ownerpw:            []byte(*ownerpw),
+				Parentpw:           []byte(*parentpw),
+				Parent:             uint32(*parent),
+				Password:           []byte(*password),
+				RSAScheme:          sch,
+				PCRs:               uintpcrs,
+				Description:        *description,
+				PersistentHandle:   *persistentHandle,
+				EnablePolicySyntax: *enablePolicySyntax,
+			})
+			if err != nil {
+				fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
+				return 1
+			}
 
-		err = os.WriteFile(*public, key_TPM2BPublic_bytes, 0644)
-		if err != nil {
-			fmt.Printf("tpm2genkey: failed to write public key to file %v\n", err)
+		case "ecdsa":
+
+			var crv tpm2.TPMECCCurve
+			switch *curve {
+			// case "prime192v1":  // not an armored key
+			// 	crv = tpm2.TPMECCNistP192
+			case "secp224r1":
+				crv = tpm2.TPMECCNistP224
+			case "prime256v1":
+				crv = tpm2.TPMECCNistP256
+			case "secp384r1":
+				crv = tpm2.TPMECCNistP384
+			case "secp521r1":
+				crv = tpm2.TPMECCNistP521
+			default:
+				fmt.Printf("tpm2genkey: unsuported ecdsa curve: %s  must be one of [secp224r1|prime256v1|secp384r1|secp521r1]\n", *curve)
+			}
+
+			k, err = tpm2genkey.NewImportKey(&tpm2genkey.NewImportConfig{
+				TPMDevice:          rwc,
+				Alg:                *alg,
+				RawKey:             ppem,
+				Ownerpw:            []byte(*ownerpw),
+				Parentpw:           []byte(*parentpw),
+				Parent:             uint32(*parent),
+				Password:           []byte(*password),
+				ECCCurve:           crv,
+				HashAlg:            hsh,
+				PCRs:               uintpcrs,
+				Description:        *description,
+				PersistentHandle:   *persistentHandle,
+				EnablePolicySyntax: *enablePolicySyntax,
+			})
+			if err != nil {
+				fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
+				return 1
+			}
+		case "aes":
+
+			keySensitive, err := hex.DecodeString(string(ppem))
+			if err != nil {
+				fmt.Printf("tpm2genkey: error parsing private key : %v", err)
+				return 1
+			}
+			//keySensitive = ppem
+
+			var mode tpm2.TPMAlgID
+			switch *aesmode {
+			// case "prime192v1":  // not an armored key
+			// 	crv = tpm2.TPMECCNistP192
+			case "cfb":
+				mode = tpm2.TPMAlgCFB
+			case "crt":
+				mode = tpm2.TPMAlgCTR
+			case "ofb":
+				mode = tpm2.TPMAlgOFB
+			case "cbc":
+				mode = tpm2.TPMAlgCBC
+			case "ecb":
+				mode = tpm2.TPMAlgECB
+			default:
+				fmt.Printf("tpm2genkey: unsuported ecdsa curve: %s  must be one of [cfb|crt|ofb|cbc|ecb]\n", *aesmode)
+			}
+			k, err = tpm2genkey.NewImportKey(&tpm2genkey.NewImportConfig{
+				TPMDevice:          rwc,
+				Alg:                *alg,
+				RawKey:             keySensitive,
+				Ownerpw:            []byte(*ownerpw),
+				Parentpw:           []byte(*parentpw),
+				Parent:             uint32(*parent),
+				Password:           []byte(*password),
+				AESAlg:             mode,
+				AESKeySize:         *aeskeysize,
+				HashAlg:            hsh,
+				PCRs:               uintpcrs,
+				Description:        *description,
+				PersistentHandle:   *persistentHandle,
+				EnablePolicySyntax: *enablePolicySyntax,
+			})
+			if err != nil {
+				fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
+				return 1
+			}
+		case "hmac":
+
+			keySensitive, err := hex.DecodeString(string(ppem))
+			if err != nil {
+				fmt.Printf("tpm2genkey: error parsing private key : %v", err)
+				return 1
+			}
+			k, err = tpm2genkey.NewImportKey(&tpm2genkey.NewImportConfig{
+				TPMDevice:          rwc,
+				Alg:                *alg,
+				RawKey:             keySensitive,
+				Ownerpw:            []byte(*ownerpw),
+				Parentpw:           []byte(*parentpw),
+				Parent:             uint32(*parent),
+				Password:           []byte(*password),
+				HashAlg:            hsh,
+				PCRs:               uintpcrs,
+				Description:        *description,
+				PersistentHandle:   *persistentHandle,
+				EnablePolicySyntax: *enablePolicySyntax,
+			})
+			if err != nil {
+				fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
+				return 1
+			}
+
+		default:
+			fmt.Printf("tpm2genkey: unsupported key type %s \n", *alg)
 			return 1
 		}
-
-		n, err := tpm2.ObjectName(&ekPububFromPEMTemplate)
+		err = os.WriteFile(*out, k, 0644)
 		if err != nil {
-			fmt.Printf("tpm2genkey:  to get name key: %v", err)
+			fmt.Printf("tpm2genkey: failed to write private key to file %v\n", err)
 			return 1
 		}
-		fmt.Printf("loaded external %s\n", hex.EncodeToString(n.Buffer))
-
-		fmt.Printf("loaded name %s\n", hex.EncodeToString(l.Name.Buffer))
 
 	default:
 		fmt.Println("tpm2genkey: Unknown mode: must be create|pem2tpm|tpm2pem|loadexternal")
