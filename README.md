@@ -215,9 +215,9 @@ The following uses a softwareTPM as the target (`--tpm-path="127.0.0.1:2321"`) t
 ```bash
 openssl genpkey -algorithm rsa -pkeyopt rsa_keygen_bits:2048 -pkeyopt rsa_keygen_pubexp:65537 -out /tmp/key_rsa.pem
 
-go run cmd/main.go --mode=import --in=/tmp/key_rsa.pem \
+tpm2genkey --mode=import --in=/tmp/key_rsa.pem \
    --out=/tmp/tpmkey.pem --alg=rsa  \
-   --rsaScheme=rsassa --hashScheme=sha256     --tpm-path="127.0.0.1:2321"
+   --rsaScheme=rsassa --tpm-path="127.0.0.1:2321"
 ```
 
 To test, without password
@@ -225,14 +225,15 @@ To test, without password
 ```bash
 openssl genpkey -algorithm rsa -pkeyopt rsa_keygen_bits:2048 -pkeyopt rsa_keygen_pubexp:65537 -out /tmp/key_rsa.pem
 
-go run cmd/main.go --mode=import --in=/tmp/key_rsa.pem \
+tpm2genkey --mode=import --in=/tmp/key_rsa.pem \
    --out=/tmp/tpmkey.pem --alg=rsa \
-   --rsaScheme=rsassa --hashScheme=sha256  --tpm-path="127.0.0.1:2321"
+   --rsaScheme=rsassa --tpm-path="127.0.0.1:2321"
   
 openssl rsa -provider tpm2  -provider default -in /tmp/tpmkey.pem -text
 
 ### convert to tpm keys
-go run cmd/main.go --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=import --in=/tmp/key_rsa.pem \
+ --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
 
 printf '\x00\x00' > /tmp/unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256 \
@@ -249,13 +250,14 @@ tpm2_sign -c /tmp/key.ctx -g sha256 -o /tmp/sig.rssa -f plain /tmp/data.txt
 With password
 
 ```bash
-go run cmd/main.go --mode=import --in=/tmp/key_rsa.pem \
+tpm2genkey --mode=import --in=/tmp/key_rsa.pem \
+   --mode=import --in=/tmp/key_rsa.pem \
    --out=/tmp/tpmkey.pem --alg=rsa  \
-   --rsaScheme=rsassa --hashScheme=sha256 -password=bar    --tpm-path="127.0.0.1:2321"
+   --rsaScheme=rsassa  -password=bar    --tpm-path="127.0.0.1:2321"
   
 openssl rsa -provider tpm2  -provider default -in /tmp/tpmkey.pem -text
 
-go run cmd/main.go --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
 
 printf '\x00\x00' > /tmp/unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256 \
@@ -272,11 +274,11 @@ tpm2_sign -c /tmp/key.ctx -g sha256 -p bar -o /tmp/sig.rssa -f plain /tmp/data.t
 With policy password
 
 ```bash
-go run cmd/main.go --mode=import --in=/tmp/key_rsa.pem \
+tpm2genkey --mode=import --in=/tmp/key_rsa.pem \
    --out=/tmp/tpmkey.pem --alg=rsa  \
-   --rsaScheme=rsassa --hashScheme=sha256 -password=bar    --tpm-path="127.0.0.1:2321"
+   --rsaScheme=rsassa  -password=bar    --tpm-path="127.0.0.1:2321"
   
-go run cmd/main.go --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
 
 printf '\x00\x00' > /tmp/unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256 \
@@ -308,11 +310,11 @@ $ tpm2_pcrread sha256:23
     23: 0xF5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B
 
 tpm2_flushcontext -t
-go run cmd/main.go --mode=import --in=/tmp/key_rsa.pem \
+tpm2genkey --mode=import --in=/tmp/key_rsa.pem \
    --out=/tmp/tpmkey.pem --alg=rsa  \
-   --rsaScheme=rsassa --hashScheme=sha256 --pcrs=23    --tpm-path="127.0.0.1:2321"
+   --rsaScheme=rsassa  --pcrs=23    --tpm-path="127.0.0.1:2321"
   
-go run cmd/main.go --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
 
 printf '\x00\x00' > /tmp/unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256 \
@@ -336,13 +338,13 @@ tpm2_sign -c /tmp/key.ctx -g sha256 -o /tmp/sig.rssa -f plain /tmp/data.txt -p"s
 ```bash
 openssl genpkey -algorithm ec -pkeyopt  ec_paramgen_curve:P-256  -out /tmp/key_ecc.pem
 
-go run cmd/main.go --mode=import --in=/tmp/key_ecc.pem \
+tpm2genkey --mode=import --in=/tmp/key_ecc.pem \
    --out=/tmp/tpmkey.pem --alg=ecdsa --curve=prime256v1 --hashScheme=sha256 \
    --tpm-path="127.0.0.1:2321"
 
 openssl ec -provider tpm2  -provider default -in /tmp/tpmkey.pem -text
 
-go run cmd/main.go --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
 
 printf '\x00\x00' > /tmp/unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256 \
@@ -360,10 +362,10 @@ tpm2_sign -c /tmp/key.ctx -g sha256 -o /tmp/sig.ecc -f plain /tmp/data.txt
 ```bash
 echo -n "46be0927a4f86577f17ce6d10bc6aa61" > /tmp/aes.key
 
-go run cmd/main.go --mode=import  --in=/tmp/aes.key --out=/tmp/tpmkey.pem --alg=aes --aesScheme=cfb --aeskeysize=128 --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=import  --in=/tmp/aes.key --out=/tmp/tpmkey.pem --alg=aes --aesScheme=cfb --aeskeysize=128 --tpm-path="127.0.0.1:2321"
 
 
-go run cmd/main.go --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
 
 printf '\x00\x00' > /tmp/unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256 \
@@ -385,9 +387,9 @@ tpm2_encryptdecrypt -Q --iv /tmp/iv.bin -c /tmp/aes.ctx -d -o /tmp/plain.out /tm
 ```bash
 echo -n "46be0927a4f86577f17ce6d10bc6aa61" > /tmp/hmac_256.key
 
-go run cmd/main.go --mode=import --in=/tmp/hmac_256.key --out=/tmp/tpmkey.pem --alg=hmac --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=import --in=/tmp/hmac_256.key --out=/tmp/tpmkey.pem --alg=hmac --tpm-path="127.0.0.1:2321"
 
-go run cmd/main.go --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
+tpm2genkey --mode=pem2tpm  --in=/tmp/tpmkey.pem --public=/tmp/key.pub --private=/tmp/key.prv --tpm-path="127.0.0.1:2321"
 
 printf '\x00\x00' > /tmp/unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256 \
@@ -411,8 +413,8 @@ Python tss also provides a way to create keys.  See
 
 If you want to load keys generated by this tool into pytss, first create two keys (one with passphrase)
 ```bash
-go run cmd/main.go --out=/tmp/private1.pem --tpm-path="127.0.0.1:2321"
-go run cmd/main.go --out=/tmp/private2.pem --tpm-path="127.0.0.1:2321" --password=foo
+tpm2genkey --out=/tmp/private1.pem --tpm-path="127.0.0.1:2321"
+tpm2genkey --out=/tmp/private2.pem --tpm-path="127.0.0.1:2321" --password=foo
 ```
 then see see `python/load.py`
 

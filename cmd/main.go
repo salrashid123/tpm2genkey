@@ -32,7 +32,7 @@ var (
 	private = flag.String("private", "", "[TPM2B_PRIVATE] private key. Requires --public")
 
 	// genkey
-	alg = flag.String("alg", "rsa", "key algorithm: rsa, ecdsa, aes or hmac")
+	alg = flag.String("alg", "", "key algorithm: rsa, ecdsa, aes or hmac")
 
 	pcrs               = flag.String("pcrs", "", "pcr banks to bind the key to")
 	enablePolicySyntax = flag.Bool("enablePolicySyntax", false, "Enable policy syntax encoding")
@@ -47,8 +47,8 @@ var (
 	curve = flag.String("curve", "prime256v1", "ECDSA curve one of [secp224r1|prime256v1|secp384r1|secp521r1]")
 
 	// aes
-	aesmode    = flag.String("aesmode", "cfb", "AES mode [cfb|crt|ofb|cbc|ecb]")
-	aeskeysize = flag.Int("aeskeysize", 128, "AES keysize")
+	aesmode    = flag.String("aesmode", "cfb", "AES mode [cfb|crt|ofb|cbc|ecb] (default: cfb)")
+	aeskeysize = flag.Int("aeskeysize", 128, "AES keysize (default: 128)")
 
 	// import
 	rsaScheme  = flag.String("rsaScheme", "rsassa", "rsassa|rsapss (default rsassa)")

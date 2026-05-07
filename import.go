@@ -33,10 +33,10 @@ type NewImportConfig struct {
 	Password           []byte             // key auth password
 	RSAScheme          tpm2.TPMTRSAScheme
 	ECCCurve           tpm2.TPMECCCurve // for ecdsa [secp224r1|prime256v1|secp384r1|secp521r1"
-	HashAlg            tpm2.TPMIAlgHash
-	AESAlg             tpm2.TPMAlgID // for aes  [cfb|crt|ofb|cbc|ecb]
-	AESKeySize         int           // for aes, 128
-	PCRs               []uint        // PCR banks to bind to
+	HashAlg            tpm2.TPMIAlgHash // hashalg for ecc and hmac key types for import
+	AESAlg             tpm2.TPMAlgID    // for aes  [cfb|crt|ofb|cbc|ecb]
+	AESKeySize         int              // for aes, 128
+	PCRs               []uint           // PCR banks to bind to
 	Description        string
 	PersistentHandle   int  // persistentHandle to save the key in
 	EnablePolicySyntax bool // enable policy syntax https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#section-4.1
@@ -47,6 +47,10 @@ func NewImportKey(h *NewImportConfig) ([]byte, error) {
 	// todo: validate input
 
 	rwr := transport.FromReadWriter(h.TPMDevice)
+
+	if h.Alg == "" {
+		return nil, fmt.Errorf("--alg parameter cannot be nil")
+	}
 
 	// setup the key template
 	var keyTemplate tpm2.TPMTPublic
@@ -63,10 +67,6 @@ func NewImportKey(h *NewImportConfig) ([]byte, error) {
 
 	if h.Parent == 0 {
 		h.Parent = tpm2.TPMRHOwner.HandleValue()
-	}
-
-	if h.HashAlg == 0 {
-		h.HashAlg = tpm2.TPMAlgSHA256
 	}
 
 	var commandParameterPCR []byte
@@ -203,6 +203,10 @@ func NewImportKey(h *NewImportConfig) ([]byte, error) {
 			return nil, fmt.Errorf("tpm2-genkey:      Failed to parse PEM block containing the key %v", err)
 		}
 
+		if h.HashAlg == 0 {
+			h.HashAlg = tpm2.TPMAlgSHA256
+		}
+
 		k := pvp.(*ecdsa.PrivateKey)
 
 		pk := k.PublicKey
@@ -324,6 +328,10 @@ func NewImportKey(h *NewImportConfig) ([]byte, error) {
 		sens2B = tpm2.Marshal(sens)
 
 	case "hmac":
+
+		if h.HashAlg == 0 {
+			h.HashAlg = tpm2.TPMAlgSHA256
+		}
 		sv := make([]byte, 32)
 		io.ReadFull(rand.Reader, sv)
 		privHash := crypto.SHA256.New()
