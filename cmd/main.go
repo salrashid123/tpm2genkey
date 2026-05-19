@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -25,7 +24,7 @@ const ()
 var (
 	help = flag.Bool("help", false, "print usage")
 
-	mode = flag.String("mode", "", "create | tpm2pem | pem2tpm | import ")
+	mode = flag.String("mode", "", "create | tpm2pem | pem2tpm ")
 
 	// convert
 	public  = flag.String("public", "", "[TPM2B_PUBLIC] public key. Requires --private")
@@ -49,10 +48,6 @@ var (
 	// aes
 	aesmode    = flag.String("aesmode", "cfb", "AES mode [cfb|crt|ofb|cbc|ecb] (default: cfb)")
 	aeskeysize = flag.Int("aeskeysize", 128, "AES keysize (default: 128)")
-
-	// import
-	rsaScheme  = flag.String("rsaScheme", "rsassa", "rsassa|rsapss (default rsassa)")
-	hashScheme = flag.String("hashScheme", "sha256", "sha256|sha384|sha512 (default sha256)")
 
 	// common
 	tpmPath           = flag.String("tpm-path", "/dev/tpmrm0", "Create: Path to the TPM device (character device or a Unix socket).")
@@ -276,235 +271,8 @@ func run() int {
 			fmt.Printf("tpm2genkey: failed to write private key to file %v\n", err)
 			return 1
 		}
-	case "import":
-		if *in == "" {
-			fmt.Printf("tpm2genkey: error must specify --in  when loading external key\n")
-			return 1
-		}
-
-		if *out == "" {
-			fmt.Printf("tpm2genkey: error must specify --out= parameter when generating new key\n")
-			return 1
-		}
-		if *alg != "rsa" && *alg != "ecdsa" && *alg != "aes" && *alg != "hmac" {
-			fmt.Printf("tpm2genkey: error key algorithm must be either rsa, ecdsa, hmac or aes\n")
-			return 1
-		}
-
-		ppem, err := os.ReadFile(*in)
-		if err != nil {
-			fmt.Printf("tpm2genkey: error reading public %v\n", err)
-			return 1
-		}
-
-		rwc, err := openTPM(*tpmPath)
-		if err != nil {
-			fmt.Printf("can't open TPM %v\n", err)
-			return 1
-		}
-		defer func() {
-			rwc.Close()
-		}()
-
-		var uintpcrs []uint
-
-		if len(*pcrs) > 0 {
-			uintpcrs = make([]uint, len(strings.Split(*pcrs, ",")))
-			for idx, i := range strings.Split(*pcrs, ",") {
-				if i != "" {
-					j, err := strconv.Atoi(i)
-					if err != nil {
-						fmt.Printf("tpm2genkey: error converting pcr list  %v\n", err)
-						return 1
-					}
-					uintpcrs[idx] = uint(j)
-				}
-			}
-		}
-
-		var k []byte
-		var hsh tpm2.TPMAlgID
-		switch *hashScheme {
-		case "sha256":
-			hsh = tpm2.TPMAlgSHA256
-		case "sha384":
-			hsh = tpm2.TPMAlgSHA384
-		case "sha512":
-			hsh = tpm2.TPMAlgSHA512
-		default:
-			fmt.Fprintf(os.Stderr, " unknown hash selected %s", *hashScheme)
-			return 1
-		}
-
-		var sch tpm2.TPMTRSAScheme
-		switch *alg {
-		case "rsa":
-			switch *rsaScheme {
-			case "rsassa":
-				sch = tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSASSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSASSA,
-						&tpm2.TPMSSigSchemeRSASSA{
-							HashAlg: hsh,
-						},
-					),
-				}
-			case "rsapss":
-				sch = tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSAPSS,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSAPSS,
-						&tpm2.TPMSSigSchemeRSAPSS{
-							HashAlg: hsh,
-						},
-					),
-				}
-			default:
-				fmt.Fprintf(os.Stderr, " unknown rsa scheme selected %s", *rsaScheme)
-				return 1
-			}
-
-			k, err = tpm2genkey.NewImportKey(&tpm2genkey.NewImportConfig{
-				TPMDevice:          rwc,
-				Alg:                *alg,
-				RawKey:             ppem,
-				Ownerpw:            []byte(*ownerpw),
-				Parentpw:           []byte(*parentpw),
-				Parent:             uint32(*parent),
-				Password:           []byte(*password),
-				RSAScheme:          sch,
-				PCRs:               uintpcrs,
-				Description:        *description,
-				PersistentHandle:   *persistentHandle,
-				EnablePolicySyntax: *enablePolicySyntax,
-			})
-			if err != nil {
-				fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
-				return 1
-			}
-
-		case "ecdsa":
-
-			var crv tpm2.TPMECCCurve
-			switch *curve {
-			// case "prime192v1":  // not an armored key
-			// 	crv = tpm2.TPMECCNistP192
-			case "secp224r1":
-				crv = tpm2.TPMECCNistP224
-			case "prime256v1":
-				crv = tpm2.TPMECCNistP256
-			case "secp384r1":
-				crv = tpm2.TPMECCNistP384
-			case "secp521r1":
-				crv = tpm2.TPMECCNistP521
-			default:
-				fmt.Printf("tpm2genkey: unsuported ecdsa curve: %s  must be one of [secp224r1|prime256v1|secp384r1|secp521r1]\n", *curve)
-			}
-
-			k, err = tpm2genkey.NewImportKey(&tpm2genkey.NewImportConfig{
-				TPMDevice:          rwc,
-				Alg:                *alg,
-				RawKey:             ppem,
-				Ownerpw:            []byte(*ownerpw),
-				Parentpw:           []byte(*parentpw),
-				Parent:             uint32(*parent),
-				Password:           []byte(*password),
-				ECCCurve:           crv,
-				HashAlg:            hsh,
-				PCRs:               uintpcrs,
-				Description:        *description,
-				PersistentHandle:   *persistentHandle,
-				EnablePolicySyntax: *enablePolicySyntax,
-			})
-			if err != nil {
-				fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
-				return 1
-			}
-		case "aes":
-
-			keySensitive, err := hex.DecodeString(string(ppem))
-			if err != nil {
-				fmt.Printf("tpm2genkey: error parsing private key : %v", err)
-				return 1
-			}
-			//keySensitive = ppem
-
-			var mode tpm2.TPMAlgID
-			switch *aesmode {
-			// case "prime192v1":  // not an armored key
-			// 	crv = tpm2.TPMECCNistP192
-			case "cfb":
-				mode = tpm2.TPMAlgCFB
-			case "crt":
-				mode = tpm2.TPMAlgCTR
-			case "ofb":
-				mode = tpm2.TPMAlgOFB
-			case "cbc":
-				mode = tpm2.TPMAlgCBC
-			case "ecb":
-				mode = tpm2.TPMAlgECB
-			default:
-				fmt.Printf("tpm2genkey: unsuported ecdsa curve: %s  must be one of [cfb|crt|ofb|cbc|ecb]\n", *aesmode)
-			}
-			k, err = tpm2genkey.NewImportKey(&tpm2genkey.NewImportConfig{
-				TPMDevice:          rwc,
-				Alg:                *alg,
-				RawKey:             keySensitive,
-				Ownerpw:            []byte(*ownerpw),
-				Parentpw:           []byte(*parentpw),
-				Parent:             uint32(*parent),
-				Password:           []byte(*password),
-				AESAlg:             mode,
-				AESKeySize:         *aeskeysize,
-				HashAlg:            hsh,
-				PCRs:               uintpcrs,
-				Description:        *description,
-				PersistentHandle:   *persistentHandle,
-				EnablePolicySyntax: *enablePolicySyntax,
-			})
-			if err != nil {
-				fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
-				return 1
-			}
-		case "hmac":
-
-			keySensitive, err := hex.DecodeString(string(ppem))
-			if err != nil {
-				fmt.Printf("tpm2genkey: error parsing private key : %v", err)
-				return 1
-			}
-			k, err = tpm2genkey.NewImportKey(&tpm2genkey.NewImportConfig{
-				TPMDevice:          rwc,
-				Alg:                *alg,
-				RawKey:             keySensitive,
-				Ownerpw:            []byte(*ownerpw),
-				Parentpw:           []byte(*parentpw),
-				Parent:             uint32(*parent),
-				Password:           []byte(*password),
-				HashAlg:            hsh,
-				PCRs:               uintpcrs,
-				Description:        *description,
-				PersistentHandle:   *persistentHandle,
-				EnablePolicySyntax: *enablePolicySyntax,
-			})
-			if err != nil {
-				fmt.Printf("tpm2genkey: problem creating key, %v \n", err)
-				return 1
-			}
-
-		default:
-			fmt.Printf("tpm2genkey: unsupported key type %s \n", *alg)
-			return 1
-		}
-		err = os.WriteFile(*out, k, 0644)
-		if err != nil {
-			fmt.Printf("tpm2genkey: failed to write private key to file %v\n", err)
-			return 1
-		}
-
 	default:
-		fmt.Println("tpm2genkey: Unknown mode: must be create|pem2tpm|tpm2pem|loadexternal")
+		fmt.Println("tpm2genkey: Unknown mode: must be create|pem2tpm|tpm2pem")
 		return 1
 	}
 	return 0
