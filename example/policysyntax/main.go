@@ -90,7 +90,7 @@ func main() {
 	}
 
 	sess := keyfile.NewTPMSession(rwr)
-
+	sess.SetOpt(tpm2.Password([]byte(nil)))
 	//log.Printf("Parent is TPM_HT_PERMANENT: %t", keyfile.IsMSO(tpm2.TPMHandle(key.Parent), keyfile.TPM_HT_PERMANENT))
 	primary, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.AuthHandle{
